@@ -7,12 +7,18 @@ export type SubdivisionTier = 0 | 1 | 2;
 
 export type DrumTrackId = 'low' | 'mid' | 'high' | 'hemiola';
 
-export type SoundKitId = 'odyssey' | 'studio' | 'woodblock';
+export type SoundKitId =
+  | 'icct'
+  | 'odyssey'
+  | 'studio'
+  | 'woodblock'
+  | 'custom';
 
 export interface StepCell {
   active: boolean;
   tier: SubdivisionTier;
   velocity: number; // 0..1
+  midiNote?: number; // Optional MIDI pitch (0..127), e.g., D# minor Icct Hedral ostinato
 }
 
 export interface RissetPattern {
@@ -34,6 +40,7 @@ export interface RissetEngineParams {
   soloVoiceIndex: number | null; // null = full illusion, 0..numVoices-1 = isolate single voice
   soundKit: SoundKitId;
   masterVolume: number; // 0..1
+  rootHz?: number; // Tonic Hz for Shepard drone (e.g., 38.891 = D#1 for Icct Hedral, 36.708 = D1 for Troy)
 }
 
 export interface QuantizedCycleSpec {
@@ -66,6 +73,7 @@ export interface ScheduledTriggerEvent {
   tier: SubdivisionTier;
   gain: number;
   instantaneousBpm: number;
+  midiNote?: number;
 }
 
 const LN2 = Math.LN2;
@@ -403,6 +411,7 @@ export function computeTriggersInWindow(
             tier: cell.tier,
             gain: Math.min(1, finalGain),
             instantaneousBpm,
+            midiNote: cell.midiNote,
           });
         }
       }

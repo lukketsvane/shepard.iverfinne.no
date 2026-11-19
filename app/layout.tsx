@@ -22,7 +22,10 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: 'cover',
-  themeColor: '#000000',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+  ],
 };
 
 export const metadata: Metadata = {
@@ -52,11 +55,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
-      className={`${plusJakarta.variable} ${jetbrainsMono.variable} dark`}
+      className={`${plusJakarta.variable} ${jetbrainsMono.variable}`}
     >
       <body
         suppressHydrationWarning
-        className="fixed inset-0 w-screen h-[100dvh] overflow-hidden bg-black text-white antialiased selection:bg-white selection:text-black font-[family-name:var(--font-display)]"
+        className="fixed inset-0 w-screen h-[100dvh] overflow-hidden bg-white dark:bg-black text-neutral-950 dark:text-white antialiased selection:bg-neutral-950 selection:text-white dark:selection:bg-white dark:selection:text-black font-[family-name:var(--font-display)]"
       >
         {children}
       </body>

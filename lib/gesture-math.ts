@@ -137,7 +137,7 @@ export function evaluateTwoFingerGesture(
     const score = Math.abs(effDy) / 60;
     if (score > dominantScore) {
       dominantScore = score;
-      activeHudLabel = `RISER ${Math.round(riser * 100)}%`;
+      activeHudLabel = `RISE ${Math.round(riser * 100)}%`;
     }
   }
 
@@ -172,7 +172,7 @@ export function evaluateTwoFingerGesture(
     const score = Math.abs(distDelta) / 45;
     if (score > dominantScore) {
       dominantScore = score;
-      activeHudLabel = `${cycleSec}S`;
+      activeHudLabel = `CYCLE ${cycleSec}S`;
     }
   }
 
@@ -185,7 +185,7 @@ export function evaluateTwoFingerGesture(
     patch.direction = direction;
 
     const focus = clamp(
-      anchor.startParams.bellFocus + ( Math.abs(effAngle) / Math.PI ) * 0.45 * (deltaAngleRad > 0 ? 1 : -1),
+      anchor.startParams.bellFocus + (Math.abs(effAngle) / Math.PI) * 0.45 * (deltaAngleRad > 0 ? 1 : -1),
       0.65,
       2.1
     );
@@ -194,7 +194,8 @@ export function evaluateTwoFingerGesture(
     const score = Math.abs(effAngle) / 0.28;
     if (score > dominantScore) {
       dominantScore = score;
-      activeHudLabel = direction === 'accelerando' ? 'ACCEL' : 'DECEL';
+      const focusPct = Math.round(((focus - 0.65) / (2.1 - 0.65)) * 100);
+      activeHudLabel = `FOCUS ${focusPct}%`;
     }
   }
 

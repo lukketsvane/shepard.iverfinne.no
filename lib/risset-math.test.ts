@@ -179,3 +179,52 @@ test('two-finger vertical, horizontal, pinch, and rotate gestures isolate cleanl
   assert.equal(cycleStepCell(cloned.tracks.low[0]).active, false);
   assert.equal(getShepardRiserPartials(0, 'accelerando', 5).length, 5);
 });
+
+test('Icct Hedral preset schedules D# minor MIDI ostinato notes and exports valid SMF .mid & RIFF .wav', async () => {
+  const {
+    buildIcctWavSamplePack,
+    buildStandardMidiFile,
+    generateIcctPcmSamples,
+    midiToFreq,
+    parseStandardMidiFileToPattern,
+  } = await import('./icct-midi');
+
+  const icct = RISSET_PRESETS[0];
+  assert.equal(icct.id, 'icct-hedral');
+  assert.equal(icct.params.centerBpm, 142);
+  assert.equal(icct.params.soundKit, 'icct');
+
+  // Verify D#4 = MIDI 63 (~311.13 Hz) and triggers carry midiNote
+  assert.ok(Math.abs(midiToFreq(63) - 311.127) < 0.01);
+  const events = computeTriggersInWindow(0, 2.0, 0, icct.params, icct.pattern);
+  const highWithMidi = events.filter(
+    (e) => e.trackId === 'high' && typeof e.midiNote === 'number'
+  );
+  assert.ok(highWithMidi.length > 0);
+  assert.equal(highWithMidi[0].midiNote, 63);
+
+  // Verify Standard MIDI File (.mid) binary header and round-trip import
+  const midiBytes = buildStandardMidiFile(icct.pattern, icct.params, 4);
+  assert.equal(
+    String.fromCharCode(midiBytes[0], midiBytes[1], midiBytes[2], midiBytes[3]),
+    'MThd'
+  );
+  const parsed = parseStandardMidiFileToPattern(midiBytes, 16);
+  assert.ok(parsed !== null);
+  assert.equal(parsed.detectedBpm, 142);
+  assert.equal(parsed.pattern.tracks.high[0].active, true);
+  assert.equal(parsed.pattern.tracks.high[0].midiNote, 63);
+
+  // Verify FZ-10M PCM synthesis & 16-bit RIFF WAVE sample pack
+  const pcm = generateIcctPcmSamples(22050);
+  assert.ok(pcm.scrape.length > 1000);
+  const wavBytes = buildIcctWavSamplePack(142, 22050);
+  assert.equal(
+    String.fromCharCode(wavBytes[0], wavBytes[1], wavBytes[2], wavBytes[3]),
+    'RIFF'
+  );
+  assert.equal(
+    String.fromCharCode(wavBytes[8], wavBytes[9], wavBytes[10], wavBytes[11]),
+    'WAVE'
+  );
+});

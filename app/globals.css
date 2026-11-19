@@ -3,7 +3,7 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light dark;
   }
 
   *,
@@ -26,7 +26,5 @@
     height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
-    background-color: #000000;
-    color: #ffffff;
   }
 }

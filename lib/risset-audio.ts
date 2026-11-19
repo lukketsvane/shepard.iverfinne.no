@@ -8,6 +8,14 @@ import {
   computeTriggersInWindow,
   getShepardRiserPartials,
 } from './risset-math';
+import { generateIcctPcmSamples, midiToFreq } from './icct-midi';
+
+interface IcctAudioBufferBank {
+  kick: AudioBuffer;
+  scrape: AudioBuffer;
+  hat: AudioBuffer;
+  stab: AudioBuffer;
+}
 
 export interface VisualFlashEvent {
   elapsedTime: number;
@@ -34,6 +42,8 @@ export class RissetAudioEngine {
   private masterGain: GainNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+  private icctBuffers: IcctAudioBufferBank | null = null;
+  private customSampleBuffer: AudioBuffer | null = null;
 
   private riserBus: GainNode | null = null;
   private riserNodes: ShepardOscNode[] = [];
@@ -81,6 +91,7 @@ export class RissetAudioEngine {
       this.compressor = compressor;
       this.masterGain = masterGain;
       this.noiseBuffer = this.createNoiseBuffer(ctx);
+      this.icctBuffers = this.createIcctAudioBuffers(ctx);
       this.setupShepardRiserBank(ctx, compressor);
     }
     return this.ctx;
@@ -94,6 +105,33 @@ export class RissetAudioEngine {
       data[i] = Math.random() * 2 - 1;
     }
     return buffer;
+  }
+
+  private createIcctAudioBuffers(ctx: AudioContext): IcctAudioBufferBank {
+    const pcm = generateIcctPcmSamples(ctx.sampleRate);
+    const toAudioBuf = (arr: Float32Array): AudioBuffer => {
+      const buf = ctx.createBuffer(1, arr.length, ctx.sampleRate);
+      buf.getChannelData(0).set(arr);
+      return buf;
+    };
+    return {
+      kick: toAudioBuf(pcm.kick),
+      scrape: toAudioBuf(pcm.scrape),
+      hat: toAudioBuf(pcm.hat),
+      stab: toAudioBuf(pcm.stab),
+    };
+  }
+
+  public async loadCustomSample(arrayBuffer: ArrayBuffer): Promise<boolean> {
+    const ctx = this.ensureAudioContext();
+    if (!ctx) return false;
+    try {
+      const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      this.customSampleBuffer = decoded;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private setupShepardRiserBank(ctx: AudioContext, destination: AudioNode) {
@@ -369,7 +407,7 @@ export class RissetAudioEngine {
         cycleProgress,
         this.params.direction,
         NUM_SHEPARD_PARTIALS,
-        36.708 // D1 Dorian/Phrygian root
+        this.params.rootHz ?? 36.708
       );
 
       const now = this.ctx.currentTime;
@@ -415,6 +453,34 @@ export class RissetAudioEngine {
     // Subtle brightness nudge with octave u (without cartoon chipmunk pitch-shifting!)
     const octaveNorm = ev.octavePosition / Math.max(3, this.params.numVoices);
 
+    if (kit === 'custom' && this.customSampleBuffer) {
+      this.playCustomSampleVoice(
+        ctx,
+        dest,
+        t,
+        ev.trackId,
+        ev.gain,
+        speedTightness,
+        ev.midiNote
+      );
+      return;
+    }
+
+    if (kit === 'icct') {
+      this.playIcctHedralVoice(
+        ctx,
+        dest,
+        t,
+        ev.trackId,
+        ev.gain,
+        speedTightness,
+        octaveNorm,
+        ev.midiNote,
+        ev.tier
+      );
+      return;
+    }
+
     if (kit === 'woodblock') {
       this.playWoodblock(ctx, dest, t, ev.trackId, ev.gain, speedTightness);
       return;
@@ -443,6 +509,205 @@ export class RissetAudioEngine {
       speedTightness,
       octaveNorm
     );
+  }
+
+  private playIcctHedralVoice(
+    ctx: AudioContext,
+    dest: AudioNode,
+    t: number,
+    track: DrumTrackId,
+    gainVal: number,
+    tightness: number,
+    octaveNorm: number,
+    midiNote?: number,
+    tier?: number
+  ): void {
+    const bank = this.icctBuffers;
+
+    if (track === 'low') {
+      // 12-Bit FZ-10M Industrial Kick Sample + Saturated D# Minor Bass Pulse
+      if (bank) {
+        const src = ctx.createBufferSource();
+        src.buffer = bank.kick;
+        src.playbackRate.value = 0.96 + octaveNorm * 0.1;
+        const sGain = ctx.createGain();
+        const dur = 0.24 * tightness;
+        sGain.gain.setValueAtTime(gainVal * 0.78, t);
+        sGain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        src.connect(sGain);
+        sGain.connect(dest);
+        src.start(t);
+        src.stop(t + dur + 0.02);
+      }
+
+      const bassFreq = midiToFreq(midiNote ?? 39);
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(bassFreq, t);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(bassFreq * (4.2 + octaveNorm * 2.5), t);
+      lp.frequency.exponentialRampToValueAtTime(
+        bassFreq * 1.4,
+        t + 0.18 * tightness
+      );
+      lp.Q.value = 3.2;
+
+      const bGain = ctx.createGain();
+      const bDur = 0.21 * tightness;
+      bGain.gain.setValueAtTime(0.0001, t);
+      bGain.gain.linearRampToValueAtTime(gainVal * 0.42, t + 0.004);
+      bGain.gain.exponentialRampToValueAtTime(0.0008, t + bDur);
+
+      osc.connect(lp);
+      lp.connect(bGain);
+      bGain.connect(dest);
+      osc.start(t);
+      osc.stop(t + bDur + 0.01);
+      return;
+    }
+
+    if (track === 'mid') {
+      // Iconic Casio FZ-10M Metallic Sheet-Scrape Snare & Shrapnel
+      if (!bank) return;
+      const src = ctx.createBufferSource();
+      src.buffer = bank.scrape;
+      const isGhost = (tier ?? 1) >= 2;
+      src.playbackRate.value =
+        (isGhost ? 1.24 : 0.98) + octaveNorm * 0.16;
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'peaking';
+      bp.frequency.value = 1850 + octaveNorm * 900;
+      bp.Q.value = 1.6;
+      bp.gain.value = 3.5;
+
+      const g = ctx.createGain();
+      const dur = (isGhost ? 0.14 : 0.24) * tightness;
+      g.gain.setValueAtTime(gainVal * 0.88, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(dest);
+      src.start(t);
+      src.stop(t + dur + 0.02);
+      return;
+    }
+
+    if (track === 'high') {
+      // 12-Bit Metallic Micro-Tick + Pitched D# Minor Ostinato Synth/String Voice
+      if (bank) {
+        const hatSrc = ctx.createBufferSource();
+        hatSrc.buffer = bank.hat;
+        hatSrc.playbackRate.value = 0.95 + octaveNorm * 0.35;
+        const hGain = ctx.createGain();
+        const hDur = 0.05 * tightness;
+        hGain.gain.setValueAtTime(gainVal * 0.34, t);
+        hGain.gain.exponentialRampToValueAtTime(0.0008, t + hDur);
+        hatSrc.connect(hGain);
+        hGain.connect(dest);
+        hatSrc.start(t);
+        hatSrc.stop(t + hDur + 0.01);
+      }
+
+      const noteFreq = midiToFreq(midiNote ?? 63);
+      const oscA = ctx.createOscillator();
+      const oscB = ctx.createOscillator();
+      oscA.type = 'sawtooth';
+      oscB.type = 'triangle';
+      oscA.frequency.setValueAtTime(noteFreq * 0.998, t);
+      oscB.frequency.setValueAtTime(noteFreq * 1.003, t);
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(
+        Math.min(9000, noteFreq * (3.6 + octaveNorm * 2.2)),
+        t
+      );
+      filter.frequency.exponentialRampToValueAtTime(
+        Math.max(240, noteFreq * 1.35),
+        t + 0.14 * tightness
+      );
+      filter.Q.value = 2.0;
+
+      const mGain = ctx.createGain();
+      const mDur = 0.15 * tightness;
+      mGain.gain.setValueAtTime(0.0001, t);
+      mGain.gain.linearRampToValueAtTime(gainVal * 0.26, t + 0.006);
+      mGain.gain.exponentialRampToValueAtTime(0.0008, t + mDur);
+
+      oscA.connect(filter);
+      oscB.connect(filter);
+      filter.connect(mGain);
+      mGain.connect(dest);
+      oscA.start(t);
+      oscB.start(t);
+      oscA.stop(t + mDur + 0.01);
+      oscB.stop(t + mDur + 0.01);
+      return;
+    }
+
+    // 'hemiola': FZ-10M Sampled Icy D#m Cluster Stab transposed to target MIDI note
+    if (bank) {
+      const src = ctx.createBufferSource();
+      src.buffer = bank.stab;
+      const semitones = (midiNote ?? 75) - 63;
+      src.playbackRate.value = Math.pow(2, semitones / 12);
+      const g = ctx.createGain();
+      const dur = 0.34 * tightness;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(gainVal * 0.56, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      src.connect(g);
+      g.connect(dest);
+      src.start(t);
+      src.stop(t + dur + 0.02);
+    }
+  }
+
+  private playCustomSampleVoice(
+    ctx: AudioContext,
+    dest: AudioNode,
+    t: number,
+    track: DrumTrackId,
+    gainVal: number,
+    tightness: number,
+    midiNote?: number
+  ): void {
+    if (!this.customSampleBuffer) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this.customSampleBuffer;
+
+    let rate = 1.0;
+    if (midiNote !== undefined) {
+      const refNote = track === 'low' ? 39 : track === 'mid' ? 51 : 63;
+      rate = Math.pow(2, (midiNote - refNote) / 12);
+    } else {
+      rate =
+        track === 'low'
+          ? 0.5
+          : track === 'mid'
+            ? 1.0
+            : track === 'high'
+              ? 1.5
+              : 1.25;
+    }
+    src.playbackRate.value = Math.max(0.25, Math.min(4.0, rate));
+
+    const maxPlayDur = Math.min(
+      this.customSampleBuffer.duration / src.playbackRate.value,
+      (track === 'high' ? 0.18 : 0.42) * tightness
+    );
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(gainVal * 0.8, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.001, t + Math.max(0.03, maxPlayDur));
+
+    src.connect(g);
+    g.connect(dest);
+    src.start(t);
+    src.stop(t + Math.max(0.04, maxPlayDur + 0.01));
   }
 
   private playOdysseyDrum(

@@ -19,9 +19,12 @@ export interface RissetPreset {
 function cell(
   active: boolean,
   tier: SubdivisionTier = 2,
-  velocity = 0.85
+  velocity = 0.85,
+  midiNote?: number
 ): StepCell {
-  return { active, tier, velocity };
+  return midiNote !== undefined
+    ? { active, tier, velocity, midiNote }
+    : { active, tier, velocity };
 }
 
 export function clonePattern(pattern: RissetPattern): RissetPattern {
@@ -42,19 +45,126 @@ export function clonePattern(pattern: RissetPattern): RissetPattern {
  * Off -> Tier 2 (Subdivision) -> Tier 1 (Pulse) -> Tier 0 (Anchor) -> Off
  */
 export function cycleStepCell(current: StepCell): StepCell {
+  const notePatch =
+    current.midiNote !== undefined ? { midiNote: current.midiNote } : {};
   if (!current.active) {
-    return { active: true, tier: 2, velocity: 0.72 };
+    return { active: true, tier: 2, velocity: 0.72, ...notePatch };
   }
   if (current.tier === 2) {
-    return { active: true, tier: 1, velocity: 0.86 };
+    return { active: true, tier: 1, velocity: 0.86, ...notePatch };
   }
   if (current.tier === 1) {
-    return { active: true, tier: 0, velocity: 1.0 };
+    return { active: true, tier: 0, velocity: 1.0, ...notePatch };
   }
-  return { active: false, tier: 2, velocity: 0.72 };
+  return { active: false, tier: 2, velocity: 0.72, ...notePatch };
 }
 
 export const RISSET_PRESETS: RissetPreset[] = [
+  {
+    id: 'icct-hedral',
+    name: "Aphex Twin — 'Icct Hedral' (FZ-10M / MIDI)",
+    shortLabel: 'ICCT',
+    subtitle: '142 BPM · D♯ Minor Ostinato MIDI · Casio FZ-10M Sheet-Scrape Samples',
+    description:
+      'Models Richard D. James’s 1995 "...I Care Because You Do" centerpiece at 142 BPM in D♯ minor: 12-bit Casio FZ-10M metallic sheet-scrape percussion, Phrygian sub-bass pulses, and an interlocking minimalist MIDI arpeggio across 4 Risset tempo octaves.',
+    params: {
+      direction: 'accelerando',
+      numVoices: 4,
+      centerBpm: 142,
+      targetCycleSeconds: 22,
+      bellFocus: 1.18,
+      droppedSubdivisions: 0.74,
+      hemiolaMix: 0.58,
+      shepardRiserMix: 0.44,
+      soloVoiceIndex: null,
+      soundKit: 'icct',
+      masterVolume: 0.84,
+      rootHz: 38.891, // D#1 / Eb1 tonic
+    },
+    pattern: {
+      stepsPerBar: 16,
+      beatsPerBar: 4,
+      meterLabel: '4/4 D♯ Minor Ostinato (142 BPM)',
+      tracks: {
+        // FZ-10M Distorted Sub-Bass + Kick in D# Minor / Phrygian (D#2=39, F#2=42, E2=40, A#1=34)
+        low: [
+          cell(true, 0, 1.0, 39),
+          cell(false, 2, 0.7, 39),
+          cell(false, 2, 0.7, 39),
+          cell(true, 2, 0.78, 42),
+          cell(false, 1, 0.8, 39),
+          cell(false, 2, 0.7, 39),
+          cell(true, 2, 0.82, 39),
+          cell(false, 2, 0.7, 39),
+          cell(true, 0, 0.96, 39),
+          cell(false, 2, 0.7, 39),
+          cell(true, 2, 0.8, 40), // Phrygian b2 (E2)
+          cell(false, 2, 0.7, 39),
+          cell(false, 1, 0.8, 39),
+          cell(false, 2, 0.7, 39),
+          cell(true, 2, 0.76, 34), // Fifth below (A#1)
+          cell(false, 2, 0.7, 39),
+        ],
+        // Casio FZ-10M Metallic Sheet-Scrape Snare & Glitch Shrapnel
+        mid: [
+          cell(false, 0, 0.9, 38),
+          cell(false, 2, 0.7, 40),
+          cell(false, 2, 0.7, 40),
+          cell(false, 2, 0.7, 40),
+          cell(true, 1, 0.98, 38),
+          cell(false, 2, 0.7, 40),
+          cell(false, 2, 0.7, 40),
+          cell(true, 2, 0.64, 40),
+          cell(false, 0, 0.9, 38),
+          cell(false, 2, 0.7, 40),
+          cell(false, 2, 0.7, 40),
+          cell(true, 2, 0.68, 40),
+          cell(true, 1, 0.98, 38),
+          cell(false, 2, 0.7, 40),
+          cell(false, 2, 0.7, 40),
+          cell(true, 2, 0.72, 40),
+        ],
+        // Interlocking 16th-Note Icct Hedral MIDI Ostinato (D#4, F#4, A#4, B4, C#5, G#4, F4, D4)
+        high: [
+          cell(true, 0, 0.92, 63), // D#4
+          cell(true, 2, 0.66, 66), // F#4
+          cell(true, 1, 0.8, 70),  // A#4
+          cell(true, 2, 0.72, 71), // B4 (minor-second rub against A#4!)
+          cell(true, 1, 0.86, 63), // D#4
+          cell(true, 2, 0.66, 66), // F#4
+          cell(true, 1, 0.8, 70),  // A#4
+          cell(true, 2, 0.74, 73), // C#5
+          cell(true, 0, 0.92, 63), // D#4
+          cell(true, 2, 0.66, 66), // F#4
+          cell(true, 1, 0.8, 70),  // A#4
+          cell(true, 2, 0.72, 71), // B4
+          cell(true, 1, 0.86, 68), // G#4
+          cell(true, 2, 0.68, 66), // F#4
+          cell(true, 2, 0.74, 65), // F4
+          cell(true, 2, 0.7, 62),  // D4 leading tone back to D#4
+        ],
+        // 3+3+3+3+4 Icy Organ / String Cluster Cross-Accent (D#5, F#5, B4, A#4, E5)
+        hemiola: [
+          cell(true, 0, 0.94, 75), // D#5
+          cell(false, 2, 0.7, 75),
+          cell(false, 2, 0.7, 75),
+          cell(true, 2, 0.82, 78), // F#5
+          cell(false, 2, 0.7, 78),
+          cell(false, 2, 0.7, 78),
+          cell(true, 1, 0.88, 71), // B4
+          cell(false, 2, 0.7, 71),
+          cell(false, 2, 0.7, 71),
+          cell(true, 2, 0.82, 70), // A#4
+          cell(false, 2, 0.7, 70),
+          cell(false, 2, 0.7, 70),
+          cell(true, 1, 0.88, 76), // E5 Phrygian cluster
+          cell(false, 2, 0.7, 76),
+          cell(false, 2, 0.7, 76),
+          cell(false, 2, 0.7, 76),
+        ],
+      },
+    },
+  },
   {
     id: 'troy-odyssey',
     name: "Troy — 'The Odyssey' 6/8 Illusion",
