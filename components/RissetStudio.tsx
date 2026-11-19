@@ -668,10 +668,10 @@ export default function RissetStudio() {
       data-direction={params.direction}
       data-preset={RISSET_PRESETS[presetIndex]?.id ?? 'icct-hedral'}
       data-theme={systemTheme}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerEnd}
-      onPointerCancel={handlePointerEnd}
+      onPointerDown={landscape ? undefined : handlePointerDown}
+      onPointerMove={landscape ? undefined : handlePointerMove}
+      onPointerUp={landscape ? undefined : handlePointerEnd}
+      onPointerCancel={landscape ? undefined : handlePointerEnd}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
       className="relative fixed inset-0 w-screen h-[100dvh] overflow-hidden bg-white dark:bg-black text-neutral-950 dark:text-white select-none touch-none"
