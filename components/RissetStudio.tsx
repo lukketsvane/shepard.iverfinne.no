@@ -8,8 +8,8 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { Play } from 'lucide-react';
-import { RissetEngineParams, RissetPattern } from '@/lib/risset-math';
-import { RISSET_PRESETS, clonePattern } from '@/lib/risset-presets';
+import { DrumTrackId, RissetEngineParams, RissetPattern } from '@/lib/risset-math';
+import { RISSET_PRESETS, clonePattern, cycleStepCell } from '@/lib/risset-presets';
 import { RissetAudioEngine } from '@/lib/risset-audio';
 import {
   TouchPoint,
@@ -21,6 +21,7 @@ import {
   evaluateTwoFingerGesture,
 } from '@/lib/gesture-math';
 import RissetPhaseCanvas from './RissetPhaseCanvas';
+import RissetLandscapeEditor from './RissetLandscapeEditor';
 import {
   buildStandardMidiFile,
   parseStandardMidiFileToPattern,
@@ -82,6 +83,22 @@ function getServerColorSchemeSnapshot(): 'dark' | 'light' {
   return 'dark';
 }
 
+const landscapeQuery = '(orientation: landscape) and (max-height: 600px) and (pointer: coarse)';
+
+function subscribeLandscape(callback: () => void): () => void {
+  const media = window.matchMedia(landscapeQuery);
+  media.addEventListener('change', callback);
+  return () => media.removeEventListener('change', callback);
+}
+
+function getLandscapeSnapshot(): boolean {
+  return window.matchMedia(landscapeQuery).matches;
+}
+
+function getServerLandscapeSnapshot(): boolean {
+  return false;
+}
+
 export default function RissetStudio() {
   const initialPreset = RISSET_PRESETS[0];
   const [presetIndex, setPresetIndex] = useState<number>(0);
@@ -98,6 +115,7 @@ export default function RissetStudio() {
     getServerColorSchemeSnapshot
   );
   const [detailText, setDetailText] = useState<string | null>(null);
+  const landscape = useSyncExternalStore(subscribeLandscape, getLandscapeSnapshot, getServerLandscapeSnapshot);
   const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'processing' | 'ready'>('idle');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
 
@@ -613,6 +631,34 @@ export default function RissetStudio() {
     [handleTogglePlay]
   );
 
+  const handleCycleStep = useCallback((track: DrumTrackId, index: number) => {
+    setPattern((previous) => {
+      const next = clonePattern(previous);
+      next.tracks[track][index] = cycleStepCell(next.tracks[track][index]);
+      return next;
+    });
+  }, []);
+
+  const handleVelocity = useCallback((track: DrumTrackId, index: number, velocity: number) => {
+    setPattern((previous) => {
+      const next = clonePattern(previous);
+      const note = next.tracks[track][index];
+      next.tracks[track][index] = { ...note, active: true, velocity: clamp(velocity, 0.05, 1) };
+      return next;
+    });
+  }, []);
+
+  const handleShiftTrack = useCallback((track: DrumTrackId, offset: number) => {
+    setPattern((previous) => {
+      const next = clonePattern(previous);
+      const notes = next.tracks[track];
+      next.tracks[track] = notes.map((_, index) => ({
+        ...notes[(index - offset + notes.length) % notes.length],
+      }));
+      return next;
+    });
+  }, []);
+
   const cornerControlClass =
     'pointer-events-auto min-w-[48px] min-h-[48px] px-2 flex items-center justify-center text-[11px] tracking-[0.16em] font-[family-name:var(--font-mono)] text-neutral-950/60 dark:text-white/55 hover:text-neutral-950 dark:hover:text-white active:opacity-100 transition-opacity whitespace-nowrap';
 
@@ -639,16 +685,34 @@ export default function RissetStudio() {
         className="hidden"
       />
 
-      {/* Full-Viewport System-Theme Monochrome Risset Geometry */}
-      <RissetPhaseCanvas
-        engineRef={engineRef}
-        params={params}
-        pattern={pattern}
-        isPlaying={isPlaying}
-      />
+      {landscape ? (
+        <RissetLandscapeEditor
+          engineRef={engineRef}
+          params={params}
+          pattern={pattern}
+          isPlaying={isPlaying}
+          recordingState={recordingState}
+          recordingSeconds={recordingSeconds}
+          onTogglePlay={handleTogglePlay}
+          onRecord={handleRecord}
+          onExportMidi={handleExportMidi}
+          onOpenFile={handleOpenFilePicker}
+          onCyclePreset={handleCyclePreset}
+          onCycleStep={handleCycleStep}
+          onVelocity={handleVelocity}
+          onShiftTrack={handleShiftTrack}
+        />
+      ) : (
+        <RissetPhaseCanvas
+          engineRef={engineRef}
+          params={params}
+          pattern={pattern}
+          isPlaying={isPlaying}
+        />
+      )}
 
       {/* Top Safe-Area Corners Only — Nothing Top-Aligned Center */}
-      <div className="fixed inset-x-0 top-0 pt-[max(0.75rem,env(safe-area-inset-top))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] flex items-center justify-between pointer-events-none">
+      <div className={`${landscape ? 'hidden' : 'fixed'} inset-x-0 top-0 pt-[max(0.75rem,env(safe-area-inset-top))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] flex items-center justify-between pointer-events-none`}>
         <button
           type="button"
           onClick={handleCyclePreset}
@@ -671,7 +735,7 @@ export default function RissetStudio() {
       </div>
 
       {/* Bottom Safe-Area Bar: Percentage/Parameter Details in Bottom-Left + MIDI/WAV/LOAD in Bottom-Right */}
-      <div className="fixed inset-x-0 bottom-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] flex items-center justify-between pointer-events-none">
+      <div className={`${landscape ? 'hidden' : 'fixed'} inset-x-0 bottom-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] flex items-center justify-between pointer-events-none`}>
         <div
           aria-live="polite"
           data-testid="bottom-left-detail"
@@ -721,7 +785,7 @@ export default function RissetStudio() {
           handleTogglePlay();
         }}
         aria-label={isPlaying ? 'Pause rhythm' : 'Start rhythm'}
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full flex items-center justify-center text-neutral-950 dark:text-white focus-visible:outline-1 focus-visible:outline-neutral-950/60 dark:focus-visible:outline-white/60 active:scale-95 transition-transform"
+        className={`${landscape ? 'hidden' : 'fixed'} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full flex items-center justify-center text-neutral-950 dark:text-white focus-visible:outline-1 focus-visible:outline-neutral-950/60 dark:focus-visible:outline-white/60 active:scale-95 transition-transform`}
       >
         {isPlaying ? (
           <span className="text-xs font-[family-name:var(--font-mono)] tabular-nums tracking-wider text-neutral-950/90 dark:text-white/90">
