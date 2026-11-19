@@ -83,7 +83,7 @@ function getServerColorSchemeSnapshot(): 'dark' | 'light' {
   return 'dark';
 }
 
-const landscapeQuery = '(orientation: landscape) and (max-height: 600px) and (pointer: coarse)';
+const landscapeQuery = '(orientation: landscape) and (max-height: 600px)';
 
 function subscribeLandscape(callback: () => void): () => void {
   const media = window.matchMedia(landscapeQuery);
