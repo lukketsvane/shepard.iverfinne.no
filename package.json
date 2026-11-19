@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "neural": "node tools/neural-bridge.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
