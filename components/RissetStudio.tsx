@@ -137,6 +137,7 @@ export default function RissetStudio() {
   } | null>(null);
   const twoFingerAnchorRef = useRef<TwoFingerAnchor | null>(null);
   const hadMultiTouchRef = useRef<boolean>(false);
+  const lastScratchTimeRef = useRef(0);
 
   const showDetail = useCallback((label: string) => {
     setDetailText(label);
@@ -547,6 +548,16 @@ export default function RissetStudio() {
           start.moved = true;
         }
         if (!start.moved) return;
+        const now = performance.now();
+        if (now - lastScratchTimeRef.current > 42) {
+          void engineRef.current?.triggerTouchSound(
+            pt.x / vw,
+            e.pressure || 0.62,
+            true,
+            Math.sign(dx)
+          );
+          lastScratchTimeRef.current = now;
+        }
 
         if (e.altKey) {
           const cx = vw * 0.5;
@@ -614,6 +625,7 @@ export default function RissetStudio() {
         activePointersRef.current.size === 1 &&
         oneFingerStartRef.current !== null &&
         !oneFingerStartRef.current.moved;
+      const releasePoint = activePointersRef.current.get(e.pointerId);
 
       activePointersRef.current.delete(e.pointerId);
 
@@ -623,12 +635,16 @@ export default function RissetStudio() {
 
       if (activePointersRef.current.size === 0) {
         oneFingerStartRef.current = null;
-        if (wasSingleTap) {
-          handleTogglePlay();
+        if (wasSingleTap && releasePoint) {
+          void engineRef.current?.triggerTouchSound(
+            releasePoint.x / (window.innerWidth || 390),
+            0.7,
+            false
+          );
         }
       }
     },
-    [handleTogglePlay]
+    []
   );
 
   const handleCycleStep = useCallback((track: DrumTrackId, index: number) => {
@@ -709,6 +725,17 @@ export default function RissetStudio() {
           pattern={pattern}
           isPlaying={isPlaying}
         />
+      )}
+
+      {!landscape && (
+        <div className="fixed top-[max(4.5rem,calc(env(safe-area-inset-top)+3.5rem))] inset-x-0 text-center pointer-events-none">
+          <p className="text-[9px] font-[family-name:var(--font-mono)] tracking-[0.22em] text-neutral-950/45 dark:text-white/45">
+            TAP TO STRIKE <span aria-hidden="true">·</span> DRAG TO SCRATCH
+          </p>
+          <p className="mt-1 text-[8px] font-[family-name:var(--font-mono)] tracking-[0.16em] text-neutral-950/30 dark:text-white/30">
+            WOOD <span aria-hidden="true">—</span> LIQUID <span aria-hidden="true">—</span> METAL / VOICE
+          </p>
+        </div>
       )}
 
       {/* Top Safe-Area Corners Only — Nothing Top-Aligned Center */}

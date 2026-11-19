@@ -123,6 +123,77 @@ export class RissetAudioEngine {
     };
   }
 
+  public async triggerTouchSound(
+    position: number,
+    intensity = 0.65,
+    isScratch = false,
+    direction = 0
+  ): Promise<void> {
+    const ctx = this.ensureAudioContext();
+    if (!ctx || !this.compressor) return;
+    if (ctx.state === 'suspended') await ctx.resume();
+
+    const x = Math.max(0, Math.min(1, position));
+    const velocity = Math.max(0.12, Math.min(1, intensity));
+    const now = ctx.currentTime;
+    const pan = ctx.createStereoPanner();
+    pan.pan.setValueAtTime((x - 0.5) * 1.7, now);
+    pan.connect(this.compressor);
+
+    const root = 150 + x * 690;
+    const duration = isScratch ? 0.18 : 0.42;
+    const amp = velocity * (isScratch ? 0.16 : 0.3);
+    const body = ctx.createOscillator();
+    const bodyGain = ctx.createGain();
+    body.type = x < 0.3 ? 'triangle' : x < 0.68 ? 'sine' : 'sawtooth';
+    body.frequency.setValueAtTime(root * (isScratch ? 0.72 : 1.08), now);
+    body.frequency.exponentialRampToValueAtTime(
+      root * (isScratch ? 1.65 : 0.72), now + duration
+    );
+    bodyGain.gain.setValueAtTime(0.0001, now);
+    bodyGain.gain.linearRampToValueAtTime(amp, now + 0.004);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0008, now + duration);
+    body.connect(bodyGain);
+    bodyGain.connect(pan);
+    body.start(now);
+    body.stop(now + duration + 0.01);
+
+    if (this.noiseBuffer) {
+      const noise = ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer;
+      noise.loop = isScratch;
+      const resonator = ctx.createBiquadFilter();
+      resonator.type = x < 0.34 ? 'bandpass' : x < 0.7 ? 'lowpass' : 'peaking';
+      resonator.frequency.setValueAtTime(root * (isScratch ? 2 : 3), now);
+      resonator.Q.value = x < 0.34 ? 5.5 : x < 0.7 ? 1.4 : 8;
+      if (resonator.type === 'peaking') {
+        resonator.gain.setValueAtTime(11 + velocity * 7, now);
+      }
+      const noiseGain = ctx.createGain();
+      const noiseLevel = amp * (isScratch ? 0.72 : 0.34);
+      noiseGain.gain.setValueAtTime(noiseLevel, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0008, now + duration);
+      noise.connect(resonator);
+      resonator.connect(noiseGain);
+      noiseGain.connect(pan);
+      noise.start(now);
+      noise.stop(now + duration + 0.01);
+    }
+
+    if (x > 0.68) {
+      const overtone = ctx.createOscillator();
+      const overtoneGain = ctx.createGain();
+      overtone.type = 'sine';
+      overtone.frequency.setValueAtTime(root * (2.76 + Math.abs(direction) * 0.1), now);
+      overtoneGain.gain.setValueAtTime(amp * 0.18, now);
+      overtoneGain.gain.exponentialRampToValueAtTime(0.0008, now + duration * 1.4);
+      overtone.connect(overtoneGain);
+      overtoneGain.connect(pan);
+      overtone.start(now);
+      overtone.stop(now + duration * 1.4 + 0.01);
+    }
+  }
+
   public getRecordingStream(): MediaStream | null {
     const ctx = this.ensureAudioContext();
     if (!ctx || !this.masterGain) return null;
