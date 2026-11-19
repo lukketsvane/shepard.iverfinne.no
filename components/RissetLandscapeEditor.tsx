@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Grid3X3, Hand, Play, Square, Upload, SkipForward } from 'lucide-react';
+import { AudioLines, ChevronLeft, ChevronRight, Download, Grid3X3, Hand, Play, Square, Upload, SkipForward } from 'lucide-react';
 import RissetPerformanceSurface from './RissetPerformanceSurface';
+import NeuralAudioPanel from './NeuralAudioPanel';
 import { DrumTrackId, RissetEngineParams, RissetPattern, getVoicesSnapshotAtTime } from '@/lib/risset-math';
 import { RissetAudioEngine } from '@/lib/risset-audio';
 
@@ -13,6 +14,8 @@ interface Props {
   params: RissetEngineParams;
   pattern: RissetPattern;
   isPlaying: boolean;
+  sampleId: string;
+  onUseNeuralSample: (data: ArrayBuffer) => Promise<boolean>;
   recordingState: 'idle' | 'recording' | 'processing' | 'ready';
   recordingSeconds: number;
   onTogglePlay: () => Promise<void>;
@@ -43,6 +46,8 @@ export default function RissetLandscapeEditor({
   params,
   pattern,
   isPlaying,
+  sampleId,
+  onUseNeuralSample,
   recordingState,
   recordingSeconds,
   onTogglePlay,
@@ -56,6 +61,7 @@ export default function RissetLandscapeEditor({
 }: Props) {
   const [selectedTrack, setSelectedTrack] = useState<DrumTrackId>('low');
   const [performanceMode, setPerformanceMode] = useState(false);
+  const [neuralOpen, setNeuralOpen] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const velocityRef = useRef<HTMLDivElement>(null);
   const steps = pattern.stepsPerBar;
@@ -101,6 +107,7 @@ export default function RissetLandscapeEditor({
           {performanceMode ? <Grid3X3 size={19} strokeWidth={1.5} /> : <Hand size={19} strokeWidth={1.5} />}
         </button>
         <div className="flex-1" />
+        <button className={iconButton} aria-label="Neural audio input and Stable Audio generation" onClick={() => setNeuralOpen(true)}><AudioLines size={19} strokeWidth={1.5} /></button>
         <button className={iconButton} onClick={onOpenFile} aria-label="Load audio or MIDI"><Upload size={19} /></button>
         <button className={iconButton} onClick={onExportMidi} aria-label="Download MIDI"><Download size={19} /></button>
         <button
@@ -184,7 +191,8 @@ export default function RissetLandscapeEditor({
         </div>
         <button className={iconButton} onClick={() => onShiftTrack(selectedTrack, -1)} aria-label="Shift selected rhythm one step earlier"><ChevronLeft size={23} /></button>
         <button className={iconButton} onClick={() => onShiftTrack(selectedTrack, 1)} aria-label="Shift selected rhythm one step later"><ChevronRight size={23} /></button>
-      </div></> : <RissetPerformanceSurface engineRef={engineRef} sampleId={params.soundKit} />}
+      </div></> : <RissetPerformanceSurface engineRef={engineRef} sampleId={sampleId} />}
+      {neuralOpen && <NeuralAudioPanel onClose={() => setNeuralOpen(false)} onUseSample={onUseNeuralSample} />}
     </section>
   );
 }

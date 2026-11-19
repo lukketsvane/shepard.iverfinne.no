@@ -118,6 +118,7 @@ export default function RissetStudio() {
   const landscape = useSyncExternalStore(subscribeLandscape, getLandscapeSnapshot, getServerLandscapeSnapshot);
   const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'processing' | 'ready'>('idle');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [sampleVersion, setSampleVersion] = useState(0);
 
   const engineRef = useRef<RissetAudioEngine | null>(null);
   const paramsRef = useRef<RissetEngineParams>(params);
@@ -411,6 +412,15 @@ export default function RissetStudio() {
     [recordingState, showDetail]
   );
 
+  const handleNeuralSample = useCallback(async (buffer: ArrayBuffer): Promise<boolean> => {
+    const loaded = await engineRef.current?.loadCustomSample(buffer) ?? false;
+    if (loaded) {
+      setParams((previous) => ({ ...previous, soundKit: 'custom' }));
+      setSampleVersion((previous) => previous + 1);
+    }
+    return loaded;
+  }, []);
+
   const ingestUserFile = useCallback(
     async (file: File) => {
       const lower = file.name.toLowerCase();
@@ -434,12 +444,9 @@ export default function RissetStudio() {
         return;
       }
 
-      const ok = await engineRef.current?.loadCustomSample(buf);
-      if (ok) {
-        setParams((prev) => ({ ...prev, soundKit: 'custom' }));
-      }
+      await handleNeuralSample(buf);
     },
-    [pattern.stepsPerBar, showDetail]
+    [pattern.stepsPerBar, showDetail, handleNeuralSample]
   );
 
   const handleOpenFilePicker = useCallback((e: React.MouseEvent) => {
@@ -691,6 +698,8 @@ export default function RissetStudio() {
           params={params}
           pattern={pattern}
           isPlaying={isPlaying}
+          sampleId={params.soundKit + ':' + sampleVersion}
+          onUseNeuralSample={handleNeuralSample}
           recordingState={recordingState}
           recordingSeconds={recordingSeconds}
           onTogglePlay={handleTogglePlay}
