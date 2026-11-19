@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AudioLines, ChevronLeft, ChevronRight, Download, Grid3X3, Hand, Play, Square, Upload, SkipForward } from 'lucide-react';
 import RissetPerformanceSurface from './RissetPerformanceSurface';
 import NeuralAudioPanel from './NeuralAudioPanel';
+import { buildExact5711Midi } from '@/lib/polyrhythm-5711';
 import { DrumTrackId, RissetEngineParams, RissetPattern, getVoicesSnapshotAtTime } from '@/lib/risset-math';
 import { RissetAudioEngine } from '@/lib/risset-audio';
 
@@ -62,6 +63,34 @@ export default function RissetLandscapeEditor({
   const [selectedTrack, setSelectedTrack] = useState<DrumTrackId>('low');
   const [performanceMode, setPerformanceMode] = useState(false);
   const [neuralOpen, setNeuralOpen] = useState(false);
+  const [polyEnabled, setPolyEnabled] = useState(() => engineRef.current?.isPolyrhythmEnabled() ?? false);
+  const [spatialWidth, setSpatialWidth] = useState(1.2);
+  const [spatialOrbit, setSpatialOrbit] = useState(0.12);
+
+  useEffect(() => {
+    engineRef.current?.setSpatialMotion(spatialWidth, spatialOrbit);
+  }, [engineRef, spatialWidth, spatialOrbit]);
+
+  const togglePoly = () => {
+    const next = !polyEnabled;
+    setPolyEnabled(next);
+    engineRef.current?.setPolyrhythmEnabled(next);
+  };
+
+  const exportPolyMidi = () => {
+    const bytes = buildExact5711Midi(params.centerBpm, 8);
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const url = URL.createObjectURL(new Blob([copy], { type: 'audio/midi' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'shepard-exact-5-7-11.mid';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
   const [playhead, setPlayhead] = useState(0);
   const velocityRef = useRef<HTMLDivElement>(null);
   const steps = pattern.stepsPerBar;
@@ -106,6 +135,13 @@ export default function RissetLandscapeEditor({
         <button className={iconButton} onClick={() => setPerformanceMode((value) => !value)} aria-label={performanceMode ? 'Show rhythm editor' : 'Play fingertip instruments and scratch'}>
           {performanceMode ? <Grid3X3 size={19} strokeWidth={1.5} /> : <Hand size={19} strokeWidth={1.5} />}
         </button>
+        <button
+          className={`h-10 min-w-[72px] px-1 text-[11px] font-[family-name:var(--font-mono)] ${polyEnabled ? 'font-bold text-white' : 'text-white/55'}`}
+          onClick={togglePoly}
+          aria-pressed={polyEnabled}
+          aria-label="Toggle exact five against seven against eleven polyrhythm"
+        >5:7:11</button>
+        <button className={iconButton} onClick={exportPolyMidi} aria-label="Download exact 5:7:11 MIDI"><Download size={17} strokeWidth={1.5}/></button>
         <div className="flex-1" />
         <button className={iconButton} aria-label="Neural audio input and Stable Audio generation" onClick={() => setNeuralOpen(true)}><AudioLines size={19} strokeWidth={1.5} /></button>
         <button className={iconButton} onClick={onOpenFile} aria-label="Load audio or MIDI"><Upload size={19} /></button>
@@ -122,6 +158,18 @@ export default function RissetLandscapeEditor({
         </button>
       </div>
 
+      {polyEnabled && (
+        <div className="flex h-8 shrink-0 items-center justify-end gap-5 border-b border-white/25 px-2 text-[10px] font-[family-name:var(--font-mono)]">
+          <label className="flex items-center gap-2">WIDTH
+            <input aria-label="Spatial width" type="range" min={0} max={2.5} step={0.1} value={spatialWidth}
+              onChange={(event) => setSpatialWidth(Number(event.target.value))} className="w-24 accent-white" />
+          </label>
+          <label className="flex items-center gap-2">ORBIT
+            <input aria-label="Spatial orbit speed" type="range" min={0} max={0.5} step={0.01} value={spatialOrbit}
+              onChange={(event) => setSpatialOrbit(Number(event.target.value))} className="w-24 accent-white" />
+          </label>
+        </div>
+      )}
       {!performanceMode ? <><div className="ml-[52px] mr-[1px] grid h-6 shrink-0 items-center border-b border-white/20" style={{ gridTemplateColumns: `repeat(${steps}, minmax(0, 1fr))` }}>
         {Array.from({ length: steps }, (_, index) => (
           <span key={index} className={`mx-auto w-px ${index % 4 === 0 ? 'h-3 bg-white' : 'h-1.5 bg-white/40'}`} />
@@ -192,7 +240,7 @@ export default function RissetLandscapeEditor({
         <button className={iconButton} onClick={() => onShiftTrack(selectedTrack, -1)} aria-label="Shift selected rhythm one step earlier"><ChevronLeft size={23} /></button>
         <button className={iconButton} onClick={() => onShiftTrack(selectedTrack, 1)} aria-label="Shift selected rhythm one step later"><ChevronRight size={23} /></button>
       </div></> : <RissetPerformanceSurface engineRef={engineRef} sampleId={sampleId} />}
-      {neuralOpen && <NeuralAudioPanel onClose={() => setNeuralOpen(false)} onUseSample={onUseNeuralSample} />}
+      {neuralOpen && <NeuralAudioPanel engineRef={engineRef} onClose={() => setNeuralOpen(false)} onUseSample={onUseNeuralSample} />}
     </section>
   );
 }

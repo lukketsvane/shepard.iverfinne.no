@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { RissetAudioEngine } from '@/lib/risset-audio';
 
 const BRIDGE = 'http://127.0.0.1:8789';
 
@@ -46,11 +47,12 @@ function encodeBase64(bytes: Uint8Array): string {
 }
 
 interface Props {
+  engineRef: React.MutableRefObject<RissetAudioEngine | null>;
   onClose: () => void;
   onUseSample: (data: ArrayBuffer) => Promise<boolean>;
 }
 
-export default function NeuralAudioPanel({ onClose, onUseSample }: Props) {
+export default function NeuralAudioPanel({ engineRef, onClose, onUseSample }: Props) {
   const [tab, setTab] = useState<'neutone' | 'sa3'>('neutone');
   const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
   const [inputId, setInputId] = useState('');
@@ -67,8 +69,6 @@ export default function NeuralAudioPanel({ onClose, onUseSample }: Props) {
   const [status, setStatus] = useState('');
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const monitorContextRef = useRef<AudioContext | null>(null);
-  const monitorGainRef = useRef<GainNode | null>(null);
 
   useEffect(() => {
     void fetch(BRIDGE + '/health')
@@ -77,10 +77,10 @@ export default function NeuralAudioPanel({ onClose, onUseSample }: Props) {
       .catch(() => setAvailable(false));
     return () => {
       if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+      engineRef.current?.setExternalInput(null);
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      void monitorContextRef.current?.close();
     };
-  }, []);
+  }, [engineRef]);
 
   const connectInput = async () => {
     try {
@@ -92,17 +92,10 @@ export default function NeuralAudioPanel({ onClose, onUseSample }: Props) {
           autoGainControl: false,
         },
       });
+      engineRef.current?.setExternalInput(null);
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      void monitorContextRef.current?.close();
-      const context = new AudioContext();
-      const source = context.createMediaStreamSource(stream);
-      const gain = context.createGain();
-      gain.gain.value = 0;
-      source.connect(gain);
-      gain.connect(context.destination);
+      engineRef.current?.setExternalInput(stream);
       streamRef.current = stream;
-      monitorContextRef.current = context;
-      monitorGainRef.current = gain;
       setMonitoring(false);
       setConnected(true);
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -118,9 +111,7 @@ export default function NeuralAudioPanel({ onClose, onUseSample }: Props) {
     recorderRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    void monitorContextRef.current?.close();
-    monitorContextRef.current = null;
-    monitorGainRef.current = null;
+    engineRef.current?.setExternalInput(null);
     setConnected(false);
     setMonitoring(false);
     setCapturing(false);
@@ -164,8 +155,7 @@ export default function NeuralAudioPanel({ onClose, onUseSample }: Props) {
   };
 
   const toggleMonitor = () => {
-    if (!monitorGainRef.current) return;
-    monitorGainRef.current.gain.value = monitoring ? 0 : 0.8;
+    engineRef.current?.setExternalMonitor(!monitoring);
     setMonitoring(!monitoring);
   };
 
