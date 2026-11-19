@@ -166,7 +166,7 @@ export default function RissetStudio() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         const tag = (e.target as HTMLElement | null)?.tagName;
-        if (tag === 'BUTTON') return;
+        if (tag === 'BUTTON' || tag === 'A') return;
         e.preventDefault();
         handleTogglePlay();
       } else if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
@@ -200,23 +200,6 @@ export default function RissetStudio() {
     [presetIndex, flashHud]
   );
 
-  const handleCycleSolo = useCallback(
-    (e: React.MouseEvent | React.PointerEvent) => {
-      e.stopPropagation();
-      setParams((prev) => {
-        const nextSolo =
-          prev.soloVoiceIndex === null
-            ? 0
-            : prev.soloVoiceIndex + 1 >= prev.numVoices
-              ? null
-              : prev.soloVoiceIndex + 1;
-        flashHud(nextSolo === null ? 'ALL' : `V${nextSolo + 1}`);
-        return { ...prev, soloVoiceIndex: nextSolo };
-      });
-    },
-    [flashHud]
-  );
-
   const syncTouchOverlayPoints = () => {
     touchOverlayRef.current.points = Array.from(
       activePointersRef.current.values()
@@ -225,7 +208,7 @@ export default function RissetStudio() {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if ((e.target as HTMLElement).closest('button')) return;
+      if ((e.target as HTMLElement).closest('button, a')) return;
 
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -430,20 +413,16 @@ export default function RissetStudio() {
           {hudText ?? ''}
         </div>
 
-        <button
-          type="button"
-          onClick={handleCycleSolo}
-          aria-label={
-            params.soloVoiceIndex === null
-              ? 'All voices active'
-              : `Solo voice ${params.soloVoiceIndex + 1}`
-          }
-          className="pointer-events-auto min-w-[48px] min-h-[48px] px-2 flex items-center justify-center text-[11px] tracking-[0.16em] font-[family-name:var(--font-mono)] text-white/55 hover:text-white active:opacity-100 transition-opacity whitespace-nowrap"
+        <a
+          href="https://iverfinne.no"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Visit iverfinne.no (opens in a new tab)"
+          className="pointer-events-auto min-w-[48px] min-h-[48px] px-2 flex items-center justify-center text-[11px] tracking-[0.14em] font-[family-name:var(--font-mono)] text-white/55 hover:text-white active:opacity-100 transition-opacity whitespace-nowrap"
         >
-          {params.soloVoiceIndex === null
-            ? 'ALL'
-            : `V${params.soloVoiceIndex + 1}`}
-        </button>
+          iverfinne.no
+        </a>
       </div>
 
       {/* Center Core Trigger (Play Symbol when paused, minimal BPM numeral when playing) */}
