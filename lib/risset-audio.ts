@@ -9,6 +9,7 @@ import {
   getShepardRiserPartials,
 } from './risset-math';
 import { generateIcctPcmSamples, midiToFreq } from './icct-midi';
+import { polyrhythmEventsBetween, PolyPulse } from './polyrhythm-5711';
 
 interface IcctAudioBufferBank {
   kick: AudioBuffer;
@@ -49,6 +50,13 @@ export class RissetAudioEngine {
   private sampleSlices: Array<{ start: number; end: number }> = [];
   private scratchForward: AudioBuffer | null = null;
   private scratchReverse: AudioBuffer | null = null;
+  private polyEnabled = false;
+  private spatialWidth = 1.2;
+  private spatialOrbit = 0.12;
+  private polyPanners: PannerNode[] = [];
+  private externalSource: MediaStreamAudioSourceNode | null = null;
+  private externalGain: GainNode | null = null;
+  private externalPanner: PannerNode | null = null;
 
   private riserBus: GainNode | null = null;
   private riserNodes: ShepardOscNode[] = [];
@@ -314,6 +322,108 @@ export class RissetAudioEngine {
     source.stop(time + grain + 0.004);
   }
 
+  public setPolyrhythmEnabled(enabled: boolean): void {
+    this.polyEnabled = enabled;
+    if (!enabled) return;
+    const ctx = this.ensureAudioContext();
+    if (ctx && this.compressor && this.polyPanners.length === 0) {
+      for (let index = 0; index < 3; index++) {
+        const panner = ctx.createPanner();
+        panner.panningModel = 'HRTF';
+        panner.distanceModel = 'inverse';
+        panner.refDistance = 1;
+        panner.maxDistance = 20;
+        panner.rolloffFactor = 0.2;
+        panner.connect(this.compressor);
+        this.polyPanners.push(panner);
+      }
+    }
+    this.updateSpatialPositions();
+  }
+
+  public isPolyrhythmEnabled(): boolean {
+    return this.polyEnabled;
+  }
+
+  public setSpatialMotion(width: number, orbitHz: number): void {
+    this.spatialWidth = Math.max(0, Math.min(2.5, width));
+    this.spatialOrbit = Math.max(0, Math.min(0.5, orbitHz));
+    this.updateSpatialPositions();
+  }
+
+  public setExternalInput(stream: MediaStream | null): void {
+    this.externalSource?.disconnect();
+    this.externalGain?.disconnect();
+    this.externalPanner?.disconnect();
+    this.externalSource = null;
+    this.externalGain = null;
+    this.externalPanner = null;
+    if (!stream) return;
+    const ctx = this.ensureAudioContext();
+    if (!ctx || !this.compressor) return;
+    const source = ctx.createMediaStreamSource(stream);
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    const panner = ctx.createPanner();
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1;
+    panner.rolloffFactor = 0.2;
+    source.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.compressor);
+    this.externalSource = source;
+    this.externalGain = gain;
+    this.externalPanner = panner;
+    this.updateSpatialPositions();
+  }
+
+  public setExternalMonitor(enabled: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.externalGain) return;
+    this.externalGain.gain.setTargetAtTime(enabled ? 0.6 : 0, ctx.currentTime, 0.025);
+    if (enabled && ctx.state === 'suspended') void ctx.resume();
+  }
+
+  private updateSpatialPositions(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const phase = this.getElapsedSeconds() * this.spatialOrbit * Math.PI * 2;
+    const setPosition = (node: PannerNode, angle: number) => {
+      node.positionX.setTargetAtTime(Math.sin(angle) * this.spatialWidth, ctx.currentTime, 0.04);
+      node.positionY.setTargetAtTime(0, ctx.currentTime, 0.04);
+      node.positionZ.setTargetAtTime(-1 + Math.cos(angle) * this.spatialWidth, ctx.currentTime, 0.04);
+    };
+    this.polyPanners.forEach((panner, index) => setPosition(panner, phase + (index * 2 * Math.PI / 3)));
+    if (this.externalPanner) setPosition(this.externalPanner, phase + Math.PI / 3);
+  }
+
+  private triggerPolyrhythmHit(pulse: PolyPulse, step: number, start: number): void {
+    const ctx = this.ctx;
+    if (!ctx || this.polyPanners.length !== 3) return;
+    const index = pulse === 5 ? 0 : pulse === 7 ? 1 : 2;
+    const fallback = this.icctBuffers;
+    const buffer = this.customSampleBuffer ?? (index === 0 ? fallback?.kick : index === 1 ? fallback?.scrape : fallback?.hat);
+    if (!buffer) return;
+    const playbackRate = this.customSampleBuffer ? [0.82, 1, 1.3][index] : 1;
+    const maxDuration = Math.min(index === 2 ? 0.08 : 0.2, buffer.duration / playbackRate);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = playbackRate;
+    const gain = ctx.createGain();
+    const time = Math.max(start, ctx.currentTime);
+    const offset = this.customSampleBuffer
+      ? ((step / pulse) * Math.max(0, buffer.duration - maxDuration * playbackRate))
+      : 0;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime([0.45, 0.3, 0.18][index], time + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + Math.max(0.02, maxDuration));
+    source.connect(gain);
+    gain.connect(this.polyPanners[index]);
+    source.start(time, offset, maxDuration * playbackRate);
+    source.stop(time + maxDuration + 0.008);
+  }
+
   private setupShepardRiserBank(ctx: AudioContext, destination: AudioNode) {
     const riserBus = ctx.createGain();
     riserBus.gain.value = 0;
@@ -518,6 +628,7 @@ export class RissetAudioEngine {
 
   public dispose(): void {
     this.pause();
+    this.setExternalInput(null);
     if (this.ctx) {
       this.ctx.close().catch(() => {});
       this.ctx = null;
@@ -566,8 +677,14 @@ export class RissetAudioEngine {
         }
       }
 
+      if (this.polyEnabled && this.ctx && this.ctx.state === 'running') {
+        for (const hit of polyrhythmEventsBetween(windowStart, windowEnd, this.params.centerBpm)) {
+          this.triggerPolyrhythmHit(hit.pulse, hit.step, this.startAudioTime + hit.second);
+        }
+      }
       this.scheduledUntilElapsed = windowEnd;
     }
+    this.updateSpatialPositions();
 
     // Update continuous Shepard Pitch Riser frequencies & bell gains
     if (
