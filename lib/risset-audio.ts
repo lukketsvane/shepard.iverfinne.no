@@ -40,6 +40,7 @@ const NUM_SHEPARD_PARTIALS = 5;
 export class RissetAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private recordingDestination: MediaStreamAudioDestinationNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private icctBuffers: IcctAudioBufferBank | null = null;
@@ -120,6 +121,16 @@ export class RissetAudioEngine {
       hat: toAudioBuf(pcm.hat),
       stab: toAudioBuf(pcm.stab),
     };
+  }
+
+  public getRecordingStream(): MediaStream | null {
+    const ctx = this.ensureAudioContext();
+    if (!ctx || !this.masterGain) return null;
+    if (!this.recordingDestination) {
+      this.recordingDestination = ctx.createMediaStreamDestination();
+      this.masterGain.connect(this.recordingDestination);
+    }
+    return this.recordingDestination.stream;
   }
 
   public async loadCustomSample(arrayBuffer: ArrayBuffer): Promise<boolean> {

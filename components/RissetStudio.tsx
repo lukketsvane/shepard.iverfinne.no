@@ -22,12 +22,43 @@ import {
 } from '@/lib/gesture-math';
 import RissetPhaseCanvas from './RissetPhaseCanvas';
 import {
-  buildIcctWavSamplePack,
   buildStandardMidiFile,
   parseStandardMidiFileToPattern,
 } from '@/lib/icct-midi';
 
 const PRESET_SHORT_CODES = ['ICCT', 'TROY', '4/4', 'CLICK', 'DECEL'];
+
+function recordingToWav(audio: AudioBuffer): Blob {
+  const channels = Math.min(2, audio.numberOfChannels);
+  const pcm = Array.from({ length: channels }, (_, channel) => audio.getChannelData(channel));
+  const output = new ArrayBuffer(44 + audio.length * channels * 2);
+  const view = new DataView(output);
+  const write = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  write(0, 'RIFF');
+  view.setUint32(4, output.byteLength - 8, true);
+  write(8, 'WAVE');
+  write(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, audio.sampleRate, true);
+  view.setUint32(28, audio.sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  write(36, 'data');
+  view.setUint32(40, audio.length * channels * 2, true);
+  let offset = 44;
+  for (let i = 0; i < audio.length; i++) {
+    for (let channel = 0; channel < channels; channel++) {
+      const value = Math.max(-1, Math.min(1, pcm[channel][i]));
+      view.setInt16(offset, value < 0 ? value * 32768 : value * 32767, true);
+      offset += 2;
+    }
+  }
+  return new Blob([output], { type: 'audio/wav' });
+}
 
 function subscribeColorScheme(callback: () => void): () => void {
   if (typeof window === 'undefined' || !window.matchMedia) return () => {};
@@ -67,11 +98,15 @@ export default function RissetStudio() {
     getServerColorSchemeSnapshot
   );
   const [detailText, setDetailText] = useState<string | null>(null);
+  const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'processing' | 'ready'>('idle');
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
 
   const engineRef = useRef<RissetAudioEngine | null>(null);
   const paramsRef = useRef<RissetEngineParams>(params);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedWavRef = useRef<Blob | null>(null);
   const detailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Gesture tracking refs
@@ -286,17 +321,76 @@ export default function RissetStudio() {
     [presetIndex, pattern, params, triggerBlobDownload]
   );
 
-  const handleExportSamplesWav = useCallback(
-    (e: React.MouseEvent) => {
+  const handleRecord = useCallback(
+    async (e: React.MouseEvent) => {
       e.stopPropagation();
-      const wavBytes = buildIcctWavSamplePack(params.centerBpm, 44100);
-      triggerBlobDownload(
-        wavBytes,
-        `icct-hedral-fz10m-${params.centerBpm}bpm.wav`,
-        'audio/wav'
-      );
+      if (recordingState === 'ready') {
+        const wav = recordedWavRef.current;
+        if (!wav) return;
+        const url = URL.createObjectURL(wav);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'shepard-recording.wav';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+        recordedWavRef.current = null;
+        setRecordingState('idle');
+        return;
+      }
+      if (recordingState === 'recording') {
+        setRecordingState('processing');
+        mediaRecorderRef.current?.stop();
+        return;
+      }
+      if (recordingState !== 'idle') return;
+      const engine = engineRef.current;
+      if (!engine || typeof MediaRecorder === 'undefined') {
+        showDetail('REC UNAVAILABLE');
+        return;
+      }
+      try {
+        const stream = engine.getRecordingStream();
+        if (!stream) throw new Error('No audio stream');
+        const codec = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((type) => MediaRecorder.isTypeSupported(type));
+        const recorder = codec ? new MediaRecorder(stream, { mimeType: codec }) : new MediaRecorder(stream);
+        const chunks: Blob[] = [];
+        recorder.ondataavailable = (event) => {
+          if (event.data.size) chunks.push(event.data);
+        };
+        recorder.onstop = async () => {
+          mediaRecorderRef.current = null;
+          const decodeContext = new AudioContext();
+          try {
+            const data = new Blob(chunks, { type: recorder.mimeType });
+            const decoded = await decodeContext.decodeAudioData(await data.arrayBuffer());
+            recordedWavRef.current = recordingToWav(decoded);
+            setRecordingSeconds(Math.round(decoded.duration));
+            setRecordingState('ready');
+          } catch {
+            setRecordingState('idle');
+            showDetail('REC FAILED');
+          } finally {
+            void decodeContext.close();
+          }
+        };
+        recorder.onerror = () => {
+          mediaRecorderRef.current = null;
+          setRecordingState('idle');
+          showDetail('REC FAILED');
+        };
+        await engine.start();
+        setIsPlaying(true);
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+        setRecordingState('recording');
+      } catch {
+        setRecordingState('idle');
+        showDetail('REC FAILED');
+      }
     },
-    [params.centerBpm, triggerBlobDownload]
+    [recordingState, showDetail]
   );
 
   const ingestUserFile = useCallback(
@@ -591,19 +685,22 @@ export default function RissetStudio() {
         <div className="flex items-center gap-1">
           <button
             type="button"
+            onClick={handleRecord}
+            disabled={recordingState === 'processing'}
+            aria-label={recordingState === 'recording' ? 'Stop recording' : recordingState === 'ready' ? 'Download WAV recording' : 'Start recording'}
+            className={`${cornerControlClass} ${recordingState === 'recording' ? '!text-red-600 font-bold animate-pulse' : ''}`}
+          >
+            {recordingState === 'ready'
+              ? `${String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:${String(recordingSeconds % 60).padStart(2, '0')}`
+              : recordingState === 'processing' ? '...' : 'REC'}
+          </button>
+          <button
+            type="button"
             onClick={handleExportMidi}
             aria-label="Download MIDI file"
             className={cornerControlClass}
           >
             MIDI
-          </button>
-          <button
-            type="button"
-            onClick={handleExportSamplesWav}
-            aria-label="Download FZ-10M WAV samples"
-            className={cornerControlClass}
-          >
-            WAV
           </button>
           <button
             type="button"
