@@ -46,6 +46,7 @@ export class RissetAudioEngine {
   private icctBuffers: IcctAudioBufferBank | null = null;
   private customSampleBuffer: AudioBuffer | null = null;
   private scratchOrigin: AudioBuffer | null = null;
+  private sampleSlices: Array<{ start: number; end: number }> = [];
   private scratchForward: AudioBuffer | null = null;
   private scratchReverse: AudioBuffer | null = null;
 
@@ -142,6 +143,7 @@ export class RissetAudioEngine {
     try {
       const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
       this.customSampleBuffer = decoded;
+      this.sampleSlices = this.findAudioSlices(decoded);
       this.scratchOrigin = null;
       this.scratchForward = null;
       this.scratchReverse = null;
@@ -151,12 +153,57 @@ export class RissetAudioEngine {
     }
   }
 
+  private findAudioSlices(buffer: AudioBuffer): Array<{ start: number; end: number }> {
+    const rate = buffer.sampleRate;
+    const pcm = buffer.getChannelData(0);
+    const duration = Math.min(12, buffer.duration);
+    const hop = Math.max(128, Math.floor(rate * 0.012));
+    const boundaries = [0];
+    let previous = 0;
+    for (let offset = hop; offset < Math.floor(duration * rate); offset += hop) {
+      let power = 0;
+      for (let sample = offset; sample < Math.min(pcm.length, offset + hop); sample++)
+        power += pcm[sample] * pcm[sample];
+      const rms = Math.sqrt(power / hop);
+      const seconds = offset / rate;
+      if (seconds - boundaries[boundaries.length - 1] >= 0.09 && rms > 0.025 && rms > previous * 1.65 + 0.008)
+        boundaries.push(seconds);
+      previous = rms * 0.6 + previous * 0.4;
+      if (boundaries.length === 8) break;
+    }
+    if (boundaries.length < 4 && duration > 0.4) {
+      boundaries.length = 0;
+      for (let i = 0; i < Math.min(8, Math.floor(duration / 0.3)); i++)
+        boundaries.push(i * (duration / Math.min(8, Math.floor(duration / 0.3))));
+    }
+    return boundaries.map((start, i) => ({
+      start,
+      end: Math.min(duration, boundaries[i + 1] ?? start + 0.5),
+    }));
+  }
+
   public triggerFingerInstrument(index: number, strength = 0.85, pitchShift = 0): void {
     const ctx = this.ensureAudioContext();
     if (!ctx || !this.compressor) return;
     if (ctx.state === 'suspended') void ctx.resume();
     const time = ctx.currentTime + 0.005;
     const gainValue = Math.max(0.08, Math.min(0.95, strength)) * 0.68;
+
+    if (index < 4 && this.customSampleBuffer && this.sampleSlices.length) {
+      const slice = this.sampleSlices[Math.min(index, this.sampleSlices.length - 1)];
+      const duration = Math.max(0.025, Math.min(0.5, slice.end - slice.start));
+      const source = ctx.createBufferSource();
+      source.buffer = this.customSampleBuffer;
+      const envelope = ctx.createGain();
+      envelope.gain.setValueAtTime(0.0001, time);
+      envelope.gain.linearRampToValueAtTime(gainValue, time + 0.003);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+      source.connect(envelope);
+      envelope.connect(this.compressor);
+      source.start(time, slice.start, duration);
+      source.stop(time + duration + 0.006);
+      return;
+    }
 
     if (index < 4) {
       const bank = this.icctBuffers;
