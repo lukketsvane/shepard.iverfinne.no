@@ -21,3 +21,15 @@ Install Neutone FX from https://neutone.jp/fx in a DAW, load a compatible RAVE m
 Shepard does not host the VST3/AU or execute RAVE inside the browser. Avoid monitoring a physical microphone pointing at your speakers, which can feed back.
 
 Note: Localhost on an iPhone does not point to your Windows computer. The CPU companion is for the browser on the computer where the model is running. To use the model on another device, deploy a separately secured private bridge.
+
+## Combining the sound engines
+
+The default portrait Shepard-Risset instrument stays unchanged.
+
+In landscape, toggle 5:7:11 to add three real-time metrical streams to the original Shepard engine. All three streams restart each 4/4 bar and use exact integer-onset MIDI positions at PPQ 4620, with 5, 7 and 11 hits respectively. The download icon beside 5:7:11 exports an eight-bar MIDI file using the same timing. WIDTH sets HRTF source spread; ORBIT sets rotations per second. Use headphones for the spatial image. The additional voices are silent unless the 5:7:11 control is enabled.
+
+Load a sample or generate a new texture with Stable Audio to use the same audio as a source for the 5:7:11 voices and the fingertip performance surface. RAVE can be processed in Neutone FX in your DAW and returned through a virtual input. Enabling MONITOR mixes the incoming live, already-transformed audio through Shepard's HRTF spatial chain and the WAV recorder. This does not install or run a RAVE model inside the web browser.
+
+Alternatively, run MOSS-SoundEffect v2 using its separate documented environment from https://github.com/OpenMOSS/MOSS-TTS/tree/main/moss_soundeffect_v2, export WAV and import it with LOAD. MOSS-SoundEffect is a generator; MOSS-Audio is an understanding model. MOSS has not been bundled inside the lightweight browser app.
+
+Run the deterministic regression check with npm run test:polyrhythm (Node 22 or later).

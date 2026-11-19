@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "neural": "node tools/neural-bridge.mjs",
+    "test:polyrhythm": "node --experimental-strip-types --test tests/polyrhythm.test.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
