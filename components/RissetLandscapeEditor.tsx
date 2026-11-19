@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Play, Square, Upload, SkipForward } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Grid3X3, Hand, Play, Square, Upload, SkipForward } from 'lucide-react';
+import RissetPerformanceSurface from './RissetPerformanceSurface';
 import { DrumTrackId, RissetEngineParams, RissetPattern, getVoicesSnapshotAtTime } from '@/lib/risset-math';
 import { RissetAudioEngine } from '@/lib/risset-audio';
 
@@ -54,6 +55,7 @@ export default function RissetLandscapeEditor({
   onShiftTrack,
 }: Props) {
   const [selectedTrack, setSelectedTrack] = useState<DrumTrackId>('low');
+  const [performanceMode, setPerformanceMode] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const velocityRef = useRef<HTMLDivElement>(null);
   const steps = pattern.stepsPerBar;
@@ -95,6 +97,9 @@ export default function RissetLandscapeEditor({
           {isPlaying ? <Square size={18} fill="currentColor" strokeWidth={1} /> : <Play size={20} fill="currentColor" strokeWidth={1} />}
         </button>
         <button className={iconButton} onClick={onCyclePreset} aria-label="Next preset"><SkipForward size={18} /></button>
+        <button className={iconButton} onClick={() => setPerformanceMode((value) => !value)} aria-label={performanceMode ? 'Show rhythm editor' : 'Play fingertip instruments and scratch'}>
+          {performanceMode ? <Grid3X3 size={19} strokeWidth={1.5} /> : <Hand size={19} strokeWidth={1.5} />}
+        </button>
         <div className="flex-1" />
         <button className={iconButton} onClick={onOpenFile} aria-label="Load audio or MIDI"><Upload size={19} /></button>
         <button className={iconButton} onClick={onExportMidi} aria-label="Download MIDI"><Download size={19} /></button>
@@ -110,7 +115,7 @@ export default function RissetLandscapeEditor({
         </button>
       </div>
 
-      <div className="ml-[52px] mr-[1px] grid h-6 shrink-0 items-center border-b border-white/20" style={{ gridTemplateColumns: `repeat(${steps}, minmax(0, 1fr))` }}>
+      {!performanceMode ? <><div className="ml-[52px] mr-[1px] grid h-6 shrink-0 items-center border-b border-white/20" style={{ gridTemplateColumns: `repeat(${steps}, minmax(0, 1fr))` }}>
         {Array.from({ length: steps }, (_, index) => (
           <span key={index} className={`mx-auto w-px ${index % 4 === 0 ? 'h-3 bg-white' : 'h-1.5 bg-white/40'}`} />
         ))}
@@ -179,7 +184,7 @@ export default function RissetLandscapeEditor({
         </div>
         <button className={iconButton} onClick={() => onShiftTrack(selectedTrack, -1)} aria-label="Shift selected rhythm one step earlier"><ChevronLeft size={23} /></button>
         <button className={iconButton} onClick={() => onShiftTrack(selectedTrack, 1)} aria-label="Shift selected rhythm one step later"><ChevronRight size={23} /></button>
-      </div>
+      </div></> : <RissetPerformanceSurface engineRef={engineRef} sampleId={params.soundKit} />}
     </section>
   );
 }

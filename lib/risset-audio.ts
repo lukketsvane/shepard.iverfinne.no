@@ -45,6 +45,9 @@ export class RissetAudioEngine {
   private noiseBuffer: AudioBuffer | null = null;
   private icctBuffers: IcctAudioBufferBank | null = null;
   private customSampleBuffer: AudioBuffer | null = null;
+  private scratchOrigin: AudioBuffer | null = null;
+  private scratchForward: AudioBuffer | null = null;
+  private scratchReverse: AudioBuffer | null = null;
 
   private riserBus: GainNode | null = null;
   private riserNodes: ShepardOscNode[] = [];
@@ -139,10 +142,129 @@ export class RissetAudioEngine {
     try {
       const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
       this.customSampleBuffer = decoded;
+      this.scratchOrigin = null;
+      this.scratchForward = null;
+      this.scratchReverse = null;
       return true;
     } catch {
       return false;
     }
+  }
+
+  public triggerFingerInstrument(index: number, strength = 0.85, pitchShift = 0): void {
+    const ctx = this.ensureAudioContext();
+    if (!ctx || !this.compressor) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const time = ctx.currentTime + 0.005;
+    const gainValue = Math.max(0.08, Math.min(0.95, strength)) * 0.68;
+
+    if (index < 4) {
+      const bank = this.icctBuffers;
+      if (!bank) return;
+      const sounds = [bank.kick, bank.scrape, bank.hat, bank.stab];
+      const durations = [0.24, 0.23, 0.07, 0.33];
+      const source = ctx.createBufferSource();
+      source.buffer = sounds[index];
+      source.playbackRate.value = index === 3 ? 0.76 : 1;
+      const envelope = ctx.createGain();
+      const duration = Math.min(source.buffer.duration / source.playbackRate.value, durations[index]);
+      envelope.gain.setValueAtTime(0.0001, time);
+      envelope.gain.linearRampToValueAtTime(gainValue, time + 0.003);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+      source.connect(envelope);
+      envelope.connect(this.compressor);
+      source.start(time);
+      source.stop(time + duration + 0.008);
+      return;
+    }
+
+    const notes = [39, 63, 70, 75];
+    const note = notes[index - 4] + Math.max(-6, Math.min(6, pitchShift));
+    const frequency = midiToFreq(note);
+    const oscillator = ctx.createOscillator();
+    oscillator.type = index === 4 ? 'triangle' : index === 5 ? 'sine' : index === 6 ? 'sawtooth' : 'square';
+    oscillator.frequency.setValueAtTime(frequency, time);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(Math.min(11000, frequency * (index === 4 ? 3 : 6)), time);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(200, frequency * 1.3), time + 0.3);
+    const envelope = ctx.createGain();
+    const duration = index === 4 ? 0.42 : 0.32;
+    envelope.gain.setValueAtTime(0.0001, time);
+    envelope.gain.linearRampToValueAtTime(gainValue * 0.44, time + 0.005);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+    oscillator.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(this.compressor);
+    oscillator.start(time);
+    oscillator.stop(time + duration + 0.01);
+  }
+
+  private getScratchBuffers(): { forward: AudioBuffer; reverse: AudioBuffer } | null {
+    const ctx = this.ensureAudioContext();
+    const source = this.customSampleBuffer ?? this.icctBuffers?.scrape;
+    if (!ctx || !source) return null;
+    if (this.scratchOrigin === source && this.scratchForward && this.scratchReverse)
+      return { forward: this.scratchForward, reverse: this.scratchReverse };
+    const frames = Math.min(source.length, Math.floor(source.sampleRate * 6));
+    const forward = ctx.createBuffer(source.numberOfChannels, frames, source.sampleRate);
+    const reverse = ctx.createBuffer(source.numberOfChannels, frames, source.sampleRate);
+    for (let ch = 0; ch < source.numberOfChannels; ch++) {
+      const original = source.getChannelData(ch);
+      const f = forward.getChannelData(ch);
+      const r = reverse.getChannelData(ch);
+      for (let i = 0; i < frames; i++) {
+        f[i] = original[i];
+        r[i] = original[frames - 1 - i];
+      }
+    }
+    this.scratchOrigin = source;
+    this.scratchForward = forward;
+    this.scratchReverse = reverse;
+    return { forward, reverse };
+  }
+
+  public getScratchPeaks(count = 96): number[] {
+    const pair = this.getScratchBuffers();
+    if (!pair) return [];
+    const pcm = pair.forward.getChannelData(0);
+    const peaks: number[] = [];
+    for (let step = 0; step < count; step++) {
+      const start = Math.floor(step * pcm.length / count);
+      const end = Math.max(start + 1, Math.floor((step + 1) * pcm.length / count));
+      let maximum = 0;
+      for (let index = start; index < end; index++)
+        maximum = Math.max(maximum, Math.abs(pcm[index] ?? 0));
+      peaks.push(maximum);
+    }
+    return peaks;
+  }
+
+  public scratchAt(position: number, motion: number): void {
+    const ctx = this.ensureAudioContext();
+    const pair = this.getScratchBuffers();
+    if (!ctx || !this.compressor || !pair) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const rate = Math.max(0.3, Math.min(3, Math.abs(motion) * 1.6));
+    const backward = motion < 0;
+    const buffer = backward ? pair.reverse : pair.forward;
+    const grain = Math.min(0.07, buffer.duration / (rate * 2));
+    const length = grain * rate;
+    const normalized = Math.max(0, Math.min(1, position));
+    const offset = Math.max(0, Math.min(buffer.duration - length, (backward ? 1 - normalized : normalized) * (buffer.duration - length)));
+    const time = ctx.currentTime + 0.002;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = rate;
+    const envelope = ctx.createGain();
+    envelope.gain.setValueAtTime(0.0001, time);
+    envelope.gain.linearRampToValueAtTime(0.48, time + 0.006);
+    envelope.gain.setValueAtTime(0.48, time + Math.max(0.006, grain - 0.014));
+    envelope.gain.exponentialRampToValueAtTime(0.0001, time + grain);
+    source.connect(envelope);
+    envelope.connect(this.compressor);
+    source.start(time, offset, length);
+    source.stop(time + grain + 0.004);
   }
 
   private setupShepardRiserBank(ctx: AudioContext, destination: AudioNode) {
