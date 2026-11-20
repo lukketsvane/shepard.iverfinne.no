@@ -6,12 +6,14 @@
 import {
   activeLayers,
   advanceState,
+  checkLoopLength,
   createState,
   focusHz,
   layersInRange,
   loopSpec,
   pickSoloLayer,
   scheduleSegment,
+  steppedPitch,
 } from '../staircase/core';
 import { SlopeMotion, appliedSlopes, createSlopeMotion, stepSlopes } from '../staircase/control';
 import { shepardPartials } from '../staircase/pitch';
@@ -26,7 +28,8 @@ import {
   Track,
   isDrumRole,
 } from '../staircase/types';
-import { AudioGraph, GraphFrame, createAudioGraph } from './graph';
+import { AudioGraph, GraphFrame, SETTLE_SECONDS, createAudioGraph } from './graph';
+import { closeLoop } from './seam';
 
 const TICK_MS = 25;
 /** How far ahead of the audio clock onsets are scheduled. */
@@ -39,14 +42,37 @@ const RECENT_EVENT_SECONDS = 0.4;
 const HISTORY_SECONDS = 1;
 /** Extra time rendered before an exported loop so tails already ring at its first sample. */
 const LOOP_PREROLL_SECONDS = 6;
-const LONGEST_LOOP_SECONDS = 180;
-/** Range of tape read heads in octaves relative to the focus tempo, as drawn. */
+/** Seconds of the cycle's end that are faded into the preroll so an exported loop repeats without a click. */
+const LOOP_SEAM_SECONDS = 0.1;
+/** Audio scheduled per step while rendering offline (see renderLoop). */
+const RENDER_CHUNK_SECONDS = 0.5;
+/**
+ * Range of tape read heads in octaves relative to the focus tempo, and the width of the smooth
+ * edges of their window. Both must match the defaults of public/worklets/tape-layers.js.
+ */
 export const TAPE_RANGE_OCT: [number, number] = [-3, 9];
+const TAPE_EDGE_OCT = 1.5;
+
+function smoothstep(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+}
+
+/** How loud a tape head at `xOct` octaves from the focus is: the worklet's window. */
+function tapeHeadGain(xOct: number): number {
+  return smoothstep((xOct - TAPE_RANGE_OCT[0]) / TAPE_EDGE_OCT) * smoothstep((TAPE_RANGE_OCT[1] - xOct) / TAPE_EDGE_OCT);
+}
 
 interface Segment {
   state: StairState;
   tempoSlope: number;
   pitchSlope: number;
+}
+
+/** Without a playback session iOS lets the silent switch mute Web Audio. Not every browser has one. */
+function setPlaybackSession(): void {
+  const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  if (session) session.type = 'playback';
 }
 
 function mergeParams(params: StairParams, patch: ParamsPatch): StairParams {
@@ -61,10 +87,12 @@ export class StaircaseEngine implements IStaircaseEngine {
   private graphReady: Promise<void> | null = null;
 
   private playing = false;
-  /** Whether engine time follows the audio clock (true) or the wall clock (no audio available). */
-  private audioClock = false;
   private timer: ReturnType<typeof setInterval> | null = null;
-  /** Context (or wall-clock) time that corresponds to engine time 0. */
+  /** Suspends the context once the fade-out after stop() has finished. */
+  private suspendTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The file loaded onto the tape, kept so an exported loop can decode it at its own sample rate. */
+  private tapeData: ArrayBuffer | null = null;
+  /** Context time (wall-clock time where there is no audio) that corresponds to engine time 0. */
   private origin = 0;
   /** State at the scheduling horizon. */
   private state: StairState = createState();
@@ -79,8 +107,9 @@ export class StaircaseEngine implements IStaircaseEngine {
     this.motion = createSlopeMotion({ tempo: this.params.tempoSlope, pitch: this.params.pitchSlope });
   }
 
+  /** The audio clock whenever there is a context, even a suspended one: a second time base would put every onset out of step. */
   private clock(): number {
-    return this.audioClock && this.ctx ? this.ctx.currentTime : performance.now() / 1000;
+    return this.ctx ? this.ctx.currentTime : performance.now() / 1000;
   }
 
   private now(): number {
@@ -105,13 +134,15 @@ export class StaircaseEngine implements IStaircaseEngine {
   async start(): Promise<void> {
     if (this.playing) return;
     const ready = this.ensureGraph();
-    // Resume inside the user gesture, before anything is awaited.
-    const resumed = this.ctx?.state === 'suspended' ? this.ctx.resume().catch(() => undefined) : null;
+    // Resume inside the user gesture, before anything is awaited. Safari says 'interrupted', not
+    // 'suspended', after a call or an app switch.
+    setPlaybackSession();
+    const resumed = this.ctx && this.ctx.state !== 'running' ? this.ctx.resume().catch(() => undefined) : null;
     await Promise.all([ready, resumed]);
     if (this.playing) return;
 
     this.playing = true;
-    this.audioClock = this.ctx?.state === 'running';
+    if (this.suspendTimer) clearTimeout(this.suspendTimer);
     this.origin = this.clock() - this.state.time;
     this.history = [];
     this.graph?.setPlaying(true, this.clock());
@@ -129,6 +160,8 @@ export class StaircaseEngine implements IStaircaseEngine {
     this.history = [];
     this.recent = [];
     this.graph?.setPlaying(false, this.clock());
+    // Once nothing is left to hear, let the audio hardware and the idle voices rest.
+    this.suspendTimer = setTimeout(() => void this.ctx?.suspend().catch(() => undefined), SETTLE_SECONDS * 1000);
   }
 
   isPlaying(): boolean {
@@ -144,6 +177,7 @@ export class StaircaseEngine implements IStaircaseEngine {
     this.history = [];
     this.soloLayerId = null;
     this.recent = [];
+    this.tapeData = null;
     void this.graph?.setPreset(preset).then(() => {
       this.graph?.setLevels(this.params.levels, this.params.master);
     });
@@ -262,13 +296,15 @@ export class StaircaseEngine implements IStaircaseEngine {
 
     const partials =
       levels.pad > 0
-        ? this.preset.padChord.flatMap((offset) => shepardPartials(this.preset.tonic + offset, state.q))
+        ? this.preset.padChord.flatMap((offset) =>
+            shepardPartials(this.preset.tonic + offset, steppedPitch(state.q, this.params.pitchStep))
+          )
         : [];
     const tapeHeads =
       levels.tape > 0
         ? layersInRange(state, this.params, TAPE_RANGE_OCT[0], TAPE_RANGE_OCT[1]).map((layer) => ({
             hz: layer.beatHz,
-            gain: 1,
+            gain: tapeHeadGain(layer.xOct),
           }))
         : [];
 
@@ -303,6 +339,7 @@ export class StaircaseEngine implements IStaircaseEngine {
     try {
       const buffer = await this.ctx.decodeAudioData(data.slice(0));
       this.graph.setTapeAudio(buffer);
+      this.tapeData = data.slice(0);
       return true;
     } catch {
       return false;
@@ -312,9 +349,7 @@ export class StaircaseEngine implements IStaircaseEngine {
   async renderLoop(sampleRate = 44100): Promise<{ channels: Float32Array[]; sampleRate: number; seconds: number }> {
     const spec = loopSpec(this.params);
     if (!spec) throw new Error('A loop needs a tempo slope: with a steady tempo nothing cycles.');
-    if (spec.seconds > LONGEST_LOOP_SECONDS) {
-      throw new Error(`One cycle would be ${Math.round(spec.seconds)} s long. Use a steeper tempo slope.`);
-    }
+    checkLoopLength(spec.seconds);
     const params: StairParams = { ...this.params, solo: false };
     const tempoSlope = params.tempoSlope;
     const preroll = Math.min(LOOP_PREROLL_SECONDS, spec.seconds);
@@ -332,30 +367,46 @@ export class StaircaseEngine implements IStaircaseEngine {
       params,
       soloLayerId: null,
     };
-    const graph = await createAudioGraph(offline, this.preset, { initialFrame: first });
+    const tapeAudio = this.tapeData ? await offline.decodeAudioData(this.tapeData.slice(0)) : undefined;
+    const graph = await createAudioGraph(offline, this.preset, { initialFrame: first, tapeAudio });
     graph.setLevels(params.levels, params.master);
     graph.setPlaying(true, 0);
 
+    // Chrome keeps every node scheduled in advance alive from time 0, so scheduling the whole loop up
+    // front renders slower than real time. Scheduling a chunk at a time while the context is
+    // suspended, always one chunk ahead of the render head, keeps the graph small and is several
+    // times faster.
     const tracks = this.audibleTracks();
-    while (state.time < total) {
-      const dt = Math.min(MAX_SEGMENT_SECONDS, total - state.time);
-      graph.update({ ...first, when: state.time, state });
-      for (const event of scheduleSegment(state, dt, tempoSlope, spec.pitchSlope, params, tracks)) {
-        graph.trigger(event, event.time);
+    const scheduleUntil = (end: number) => {
+      while (state.time < end && state.time < total) {
+        const dt = Math.min(MAX_SEGMENT_SECONDS, total - state.time);
+        graph.update({ ...first, when: state.time, state });
+        for (const event of scheduleSegment(state, dt, tempoSlope, spec.pitchSlope, params, tracks)) {
+          graph.trigger(event, event.time);
+        }
+        state = advanceState(state, dt, tempoSlope, spec.pitchSlope, params);
       }
-      state = advanceState(state, dt, tempoSlope, spec.pitchSlope, params);
+    };
+    scheduleUntil(2 * RENDER_CHUNK_SECONDS);
+    for (let at = RENDER_CHUNK_SECONDS; at + RENDER_CHUNK_SECONDS < total; at += RENDER_CHUNK_SECONDS) {
+      void offline.suspend(at).then(() => {
+        scheduleUntil(at + 2 * RENDER_CHUNK_SECONDS);
+        return offline.resume();
+      });
     }
 
     const rendered = await offline.startRendering();
     graph.dispose();
     const skip = Math.round(preroll * sampleRate);
     const length = Math.round(spec.seconds * sampleRate);
-    const channels = [0, 1].map((ch) => rendered.getChannelData(ch).slice(skip, skip + length));
+    const fade = Math.round(LOOP_SEAM_SECONDS * sampleRate);
+    const channels = [0, 1].map((ch) => closeLoop(rendered.getChannelData(ch), skip, length, fade));
     return { channels, sampleRate, seconds: spec.seconds };
   }
 
   dispose(): void {
     this.stop();
+    if (this.suspendTimer) clearTimeout(this.suspendTimer);
     this.graph?.dispose();
     this.graph = null;
     this.graphReady = null;

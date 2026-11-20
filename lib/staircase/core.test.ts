@@ -9,6 +9,7 @@ import {
   loopSpec,
   pickSoloLayer,
   scheduleSegment,
+  steppedPitch,
   windowNorm,
   WINDOW_SIGMAS,
 } from './core';
@@ -302,6 +303,17 @@ test('stepped pitch only takes values on the step grid', () => {
     assert.equal(e.pitchGlide, 0);
   }
   assert.ok(new Set(events.map((e) => e.pitchOct.toFixed(4))).size === 6);
+});
+
+test('steppedPitch holds q on the step below it, so the drone and the notes agree', () => {
+  assert.equal(steppedPitch(0.3141, 0), 0.3141);
+  // quarter tones: 1/24 octave
+  assert.ok(Math.abs(steppedPitch(0.3141, 0.5) - 7 / 24) < 1e-12);
+  assert.ok(Math.abs(steppedPitch(7 / 24, 0.5) - 7 / 24) < 1e-12);
+  assert.ok(Math.abs(steppedPitch(0.9999, 0.5) - 23 / 24) < 1e-12);
+  const p = params({ pitchSlope: 3, pitchStep: 0.5 });
+  const events = run(p, [pulseTrack()], 20, createState(), 3).events;
+  for (const e of events) assert.equal(e.pitchOct, steppedPitch(e.pitchOct, 0.5));
 });
 
 test('slopes glide to their target, a kick decays, and link ties pitch to tempo', () => {

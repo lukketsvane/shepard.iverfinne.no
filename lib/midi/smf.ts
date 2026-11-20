@@ -15,6 +15,8 @@ export interface MidiNote {
 export interface ParsedMidi {
   /** First tempo found, or null when the file sets none. */
   bpm: number | null;
+  /** First time signature found, or null when the file sets none. */
+  timeSignature: { numerator: number; denominator: number } | null;
   /** Sorted by onset, then pitch. */
   notes: MidiNote[];
   /** Beats until the last note ends. */
@@ -37,6 +39,7 @@ export function parseMidi(bytes: Uint8Array): ParsedMidi | null {
   if (division === 0 || division & 0x8000) return null;
 
   let bpm: number | null = null;
+  let timeSignature: ParsedMidi['timeSignature'] = null;
   const notes: MidiNote[] = [];
   let pos = 8 + headerLength;
 
@@ -47,14 +50,23 @@ export function parseMidi(bytes: Uint8Array): ParsedMidi | null {
     pos = end;
     if (!isTrack) continue;
 
+    // A damaged file can name events and lengths that run past the track: the track stops there, keeping what was read.
+    /** Moves past `count` bytes and returns where they started. */
+    const take = (count: number): number => {
+      if (count > end - cursor) throw new RangeError('The event runs past the end of its track.');
+      cursor += count;
+      return cursor - count;
+    };
+    const byte = (): number => bytes[take(1)];
+    /** Variable-length quantity: at most four bytes, and no 32-bit shifts, which would turn a long one negative. */
     const readVarLen = (): number => {
       let value = 0;
-      while (cursor < end) {
-        const byte = bytes[cursor++];
-        value = (value << 7) | (byte & 0x7f);
-        if (!(byte & 0x80)) break;
+      for (let i = 0; i < 4; i++) {
+        const next = byte();
+        value = value * 128 + (next & 0x7f);
+        if (!(next & 0x80)) return value;
       }
-      return value;
+      throw new RangeError('A variable-length quantity is longer than four bytes.');
     };
 
     let tick = 0;
@@ -62,61 +74,66 @@ export function parseMidi(bytes: Uint8Array): ParsedMidi | null {
     /** Start tick and velocity of sounding notes, keyed by channel and pitch. */
     const open = new Map<number, Array<{ tick: number; vel: number }>>();
 
-    while (cursor < end) {
-      tick += readVarLen();
-      if (cursor >= end) break;
-      let status = bytes[cursor];
-      if (status & 0x80) {
-        cursor++;
-        if (status < 0xf0) runningStatus = status;
-      } else {
-        status = runningStatus;
-      }
+    try {
+      while (cursor < end) {
+        tick += readVarLen();
+        let status = byte();
+        if (status & 0x80) {
+          if (status < 0xf0) runningStatus = status;
+        } else {
+          cursor--;
+          status = runningStatus;
+        }
 
-      if (status === 0xff) {
-        const type = bytes[cursor++];
-        const length = readVarLen();
-        if (type === 0x51 && length === 3 && bpm === null) {
-          const microsPerBeat = (bytes[cursor] << 16) | (bytes[cursor + 1] << 8) | bytes[cursor + 2];
-          if (microsPerBeat > 0) bpm = 60_000_000 / microsPerBeat;
-        }
-        cursor += length;
-      } else if (status === 0xf0 || status === 0xf7) {
-        cursor += readVarLen();
-      } else {
-        const kind = status & 0xf0;
-        const channel = status & 0x0f;
-        if (kind === 0xc0 || kind === 0xd0) {
-          cursor += 1;
-          continue;
-        }
-        const data1 = bytes[cursor++];
-        const data2 = bytes[cursor++];
-        const key = (channel << 7) | data1;
-        if (kind === 0x90 && data2 > 0) {
-          const stack = open.get(key) ?? [];
-          stack.push({ tick, vel: data2 / 127 });
-          open.set(key, stack);
-        } else if (kind === 0x80 || kind === 0x90) {
-          const started = open.get(key)?.shift();
-          if (started) {
-            notes.push({
-              beat: started.tick / division,
-              dur: (tick - started.tick) / division,
-              midi: data1,
-              vel: started.vel,
-              channel,
-            });
+        if (status === 0xff) {
+          const type = byte();
+          const length = readVarLen();
+          const at = take(length);
+          if (type === 0x51 && length === 3 && bpm === null) {
+            const microsPerBeat = (bytes[at] << 16) | (bytes[at + 1] << 8) | bytes[at + 2];
+            if (microsPerBeat > 0) bpm = 60_000_000 / microsPerBeat;
+          } else if (type === 0x58 && length >= 2 && timeSignature === null) {
+            timeSignature = { numerator: bytes[at], denominator: 2 ** bytes[at + 1] };
+          }
+        } else if (status === 0xf0 || status === 0xf7) {
+          take(readVarLen());
+        } else {
+          const kind = status & 0xf0;
+          const channel = status & 0x0f;
+          if (kind === 0xc0 || kind === 0xd0) {
+            byte();
+            continue;
+          }
+          const data1 = byte();
+          const data2 = byte();
+          const key = (channel << 7) | data1;
+          if (kind === 0x90 && data2 > 0) {
+            const stack = open.get(key) ?? [];
+            stack.push({ tick, vel: data2 / 127 });
+            open.set(key, stack);
+          } else if (kind === 0x80 || kind === 0x90) {
+            const started = open.get(key)?.shift();
+            if (started) {
+              notes.push({
+                beat: started.tick / division,
+                dur: (tick - started.tick) / division,
+                midi: data1,
+                vel: started.vel,
+                channel,
+              });
+            }
           }
         }
       }
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
     }
   }
 
   if (notes.length === 0) return null;
   notes.sort((a, b) => a.beat - b.beat || a.midi - b.midi);
   const lengthBeats = notes.reduce((last, n) => Math.max(last, n.beat + n.dur), 0);
-  return { bpm, notes, lengthBeats };
+  return { bpm, timeSignature, notes, lengthBeats };
 }
 
 export interface TimedNote {

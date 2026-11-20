@@ -1,6 +1,6 @@
 {
-  "name": "Risset Lab — Endless Rhythm Illusion Studio",
-  "description": "Interactive auditory illusion studio exploring the Risset rhythm (the Shepard tone of tempo) and the four psychoacoustic techniques behind the endless acceleration in 'The Odyssey' soundtrack: phase-locked tempo octaves, dropped subdivisions, 3:2 hemiola, and coupled Shepard pitch risers.",
+  "name": "Endless staircase",
+  "description": "A rhythm that speeds up forever and a tone that rises forever, and the trick behind both: the Risset rhythm and the Shepard tone. Play it, steer it by tilting your phone, edit the groove, and save a loop that repeats without a seam.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

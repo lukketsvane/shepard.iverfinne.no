@@ -124,6 +124,12 @@ export interface Preset {
   padChord: number[];
   /** Keep a fixed drone under the moving one: a riser against a held note, as in "Troy". */
   padAnchor: boolean;
+  /**
+   * Loudness trim in dB, applied ahead of the limiter and independent of the Volume slider. It
+   * brings every preset to the same loudness through a small speaker, so that switching presets
+   * does not jump in level. Default 0.
+   */
+  trimDb?: number;
   /** Audio file (under /public) played on the tape instead of the drum pulses. */
   tapeUrl?: string;
   /** Words sung by a track: word i belongs to note i of `trackId`. Shown as the music plays. */

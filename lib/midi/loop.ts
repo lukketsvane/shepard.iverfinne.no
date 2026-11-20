@@ -1,4 +1,4 @@
-import { advanceState, loopSpec, scheduleSegment } from '../staircase/core';
+import { advanceState, checkLoopLength, loopSpec, scheduleSegment } from '../staircase/core';
 import { Preset, StairParams, TrackRole, isDrumRole } from '../staircase/types';
 import { TimedNote, encodeMidi } from './smf';
 
@@ -12,11 +12,12 @@ const SEGMENT_SECONDS = 0.05;
 /**
  * One seamless cycle of every layer as a MIDI clip at a fixed 120 BPM. Loop it in any
  * sequencer and it accelerates forever; velocities carry the layer fades.
- * Returns null when the tempo slope is zero.
+ * Returns null when the tempo slope is zero, and throws when the cycle is too long to write out.
  */
 export function loopMidi(preset: Preset, params: StairParams): Uint8Array | null {
   const spec = loopSpec(params);
   if (!spec) return null;
+  checkLoopLength(spec.seconds);
   const tracks = preset.tracks.map((track) => ({
     ...track,
     gain: track.gain * (isDrumRole(track.role) ? params.levels.drums : params.levels.melody),

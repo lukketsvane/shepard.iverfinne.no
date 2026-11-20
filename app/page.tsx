@@ -1,5 +1,5 @@
-import RissetStudio from '@/components/RissetStudio';
+import Studio from '@/components/Studio';
 
 export default function HomePage() {
-  return <RissetStudio />;
+  return <Studio />;
 }

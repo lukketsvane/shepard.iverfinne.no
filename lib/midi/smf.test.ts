@@ -62,3 +62,49 @@ test('encodeMidi round-trips timing, pitch and velocity through parseMidi', () =
   assert.ok(Math.abs(parsed.notes[3].vel - 0.25) < 0.01);
   assert.equal(parsed.notes[0].channel, 9);
 });
+
+/** A file with one track made of `events`, behind a valid header (format 0, 96 ticks per quarter). */
+function fileWith(events: number[]): Uint8Array {
+  const length = events.length;
+  return new Uint8Array([
+    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96,
+    0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, length, ...events,
+  ]);
+}
+
+const NOTE_ON_OFF = [0, 0x90, 60, 100, 96, 0x80, 60, 0];
+
+test('a variable-length quantity of five bytes ends the track instead of looping for ever', () => {
+  // F0 with a length that overflowed to a negative number before: the cursor used to run backwards
+  const parsed = parseMidi(fileWith([...NOTE_ON_OFF, 0, 0xf0, 0x88, 0x80, 0x80, 0x80, 0x00, 1, 2, 3]));
+  assert.equal(parsed?.notes.length, 1);
+  assert.equal(parseMidi(fileWith([0, 0xf0, 0x88, 0x80, 0x80, 0x80, 0x00, 1, 2, 3])), null);
+});
+
+test('an event whose length runs past the track keeps the notes before it', () => {
+  const parsed = parseMidi(fileWith([...NOTE_ON_OFF, 0, 0xff, 0x01, 0x7f, 65, 66]));
+  assert.equal(parsed?.notes.length, 1);
+  assert.equal(parseMidi(fileWith([0, 0x90, 60])), null);
+});
+
+test('corrupted copies of a valid file are read or refused, never endless', () => {
+  const original = encodeMidi(
+    Array.from({ length: 24 }, (_, i) => ({ time: i / 8, dur: 0.1, midi: 40 + i, vel: 0.7, channel: i % 2 })),
+    3
+  );
+  let seed = 1;
+  const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  for (let run = 0; run < 2000; run++) {
+    const copy = original.slice(0, run % 5 === 0 ? 14 + Math.floor(random() * (original.length - 14)) : original.length);
+    for (let hit = 0; hit < 1 + Math.floor(random() * 4); hit++) {
+      copy[14 + Math.floor(random() * (copy.length - 14))] = random() < 0.5 ? 0x80 | Math.floor(random() * 256) : Math.floor(random() * 256);
+    }
+    parseMidi(copy);
+  }
+});
+
+test('the first time signature is read, and a file without one has none', () => {
+  const withSignature = [0, 0xff, 0x58, 0x04, 6, 3, 24, 8, ...NOTE_ON_OFF];
+  assert.deepEqual(parseMidi(fileWith(withSignature))?.timeSignature, { numerator: 6, denominator: 8 });
+  assert.equal(parseMidi(fileWith(NOTE_ON_OFF))?.timeSignature, null);
+});

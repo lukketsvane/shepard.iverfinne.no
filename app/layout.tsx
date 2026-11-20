@@ -16,51 +16,38 @@ const jetbrainsMono = JetBrains_Mono({
   display: 'swap',
 });
 
+// Pinch zoom stays on, for anyone who needs the text larger. Accidental zooms are kept off the
+// instrument itself: touch-action on the page and on the staircase, and no gesture zoom there.
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   viewportFit: 'cover',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+    { media: '(prefers-color-scheme: dark)', color: '#0f1013' },
   ],
 };
 
+const TITLE = 'Endless staircase: Risset rhythm and Shepard tone';
+const DESCRIPTION =
+  'A rhythm that speeds up forever and a tone that rises forever, and the trick behind both. Play it, steer it by tilting your phone, edit the groove, and save a loop that repeats without a seam.';
+
 export const metadata: Metadata = {
-  title: 'Risset Lab — Endless Rhythm Illusion Studio',
-  description:
-    "Interactive auditory illusion studio exploring the Risset rhythm (the Shepard tone of tempo) and the four psychoacoustic techniques behind the endless acceleration in 'The Odyssey' soundtrack.",
+  title: TITLE,
+  description: DESCRIPTION,
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'black-translucent',
-    title: 'Risset',
+    statusBarStyle: 'default',
+    title: 'Staircase',
   },
-  openGraph: {
-    title: 'Risset Lab — Endless Rhythm Illusion Studio',
-    description:
-      "Interactive auditory illusion studio exploring the Risset rhythm (the Shepard tone of tempo) and the four psychoacoustic techniques behind the endless acceleration in 'The Odyssey' soundtrack.",
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'Risset Lab — Endless Rhythm Illusion Studio',
-    description:
-      "Interactive auditory illusion studio exploring the Risset rhythm (the Shepard tone of tempo) and the four psychoacoustic techniques behind the endless acceleration in 'The Odyssey' soundtrack.",
-  },
+  openGraph: { title: TITLE, description: DESCRIPTION, type: 'website' },
+  twitter: { card: 'summary', title: TITLE, description: DESCRIPTION },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`${plusJakarta.variable} ${jetbrainsMono.variable}`}
-    >
-      <body
-        suppressHydrationWarning
-        className="fixed inset-0 w-screen h-[100dvh] overflow-hidden bg-white dark:bg-black text-neutral-950 dark:text-white antialiased selection:bg-neutral-950 selection:text-white dark:selection:bg-white dark:selection:text-black font-[family-name:var(--font-display)]"
-      >
+    <html lang="en" className={`${plusJakarta.variable} ${jetbrainsMono.variable}`}>
+      <body suppressHydrationWarning className="antialiased">
         {children}
       </body>
     </html>

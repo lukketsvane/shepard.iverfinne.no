@@ -1,11 +1,22 @@
 import { annotateTrack } from '../staircase/meter';
 import { ClipNote, Meter, Track, TrackRole } from '../staircase/types';
+import { FOUR_FOUR, SIX_EIGHT, THREE_FOUR } from '../presets/build';
 import { ROLE_DEFAULTS } from '../presets/roles';
 import { MidiNote, ParsedMidi } from './smf';
 
 const PERCUSSION_CHANNEL = 9;
 /** Parts whose typical note lies below this MIDI note (C3) are treated as bass. */
 const BASS_BELOW = 48;
+
+/**
+ * The meter a file's time signature calls for: 3/4, 6/8 (whose beat is a dotted quarter, so
+ * quarter notes are 2/3 of a beat) or else 4/4, which is also what a file without one is taken for.
+ */
+export function meterOf(signature: ParsedMidi['timeSignature']): { meter: Meter; beatsPerQuarter: number } {
+  if (signature?.numerator === 3 && signature.denominator === 4) return { meter: THREE_FOUR, beatsPerQuarter: 1 };
+  if (signature?.numerator === 6 && signature.denominator === 8) return { meter: SIX_EIGHT, beatsPerQuarter: 2 / 3 };
+  return { meter: FOUR_FOUR, beatsPerQuarter: 1 };
+}
 
 /** General MIDI percussion note to drum role. */
 function drumRole(midi: number): TrackRole {
@@ -41,10 +52,11 @@ export function makeTrack(
 }
 
 /**
- * Turns an imported MIDI file into tracks: percussion-channel notes become drum tracks by
- * General MIDI note, every other channel becomes a bass or keys track by register.
+ * Turns an imported MIDI file into tracks, in the meter of its time signature: percussion-channel
+ * notes become drum tracks by General MIDI note, every other channel a bass or keys track by register.
  */
-export function tracksFromMidi(midi: ParsedMidi, meter: Meter): Track[] {
+export function tracksFromMidi(midi: ParsedMidi): { tracks: Track[]; meter: Meter } {
+  const { meter, beatsPerQuarter } = meterOf(midi.timeSignature);
   const groups = new Map<string, { role: TrackRole; notes: MidiNote[] }>();
   const add = (key: string, role: TrackRole, note: MidiNote) => {
     const group = groups.get(key) ?? { role, notes: [] };
@@ -53,7 +65,8 @@ export function tracksFromMidi(midi: ParsedMidi, meter: Meter): Track[] {
   };
 
   const byChannel = new Map<number, MidiNote[]>();
-  for (const note of midi.notes) {
+  for (const quarters of midi.notes) {
+    const note = { ...quarters, beat: quarters.beat * beatsPerQuarter, dur: quarters.dur * beatsPerQuarter };
     if (note.channel === PERCUSSION_CHANNEL) {
       const role = drumRole(note.midi);
       add(role, role, note);
@@ -66,7 +79,8 @@ export function tracksFromMidi(midi: ParsedMidi, meter: Meter): Track[] {
     for (const note of notes) add(`${role}-${channel}`, role, note);
   }
 
-  return [...groups.entries()].map(([key, group]) =>
-    makeTrack(`midi-${key}`, group.role, group.notes, midi.lengthBeats, meter)
+  const tracks = [...groups.entries()].map(([key, group]) =>
+    makeTrack(`midi-${key}`, group.role, group.notes, midi.lengthBeats * beatsPerQuarter, meter)
   );
+  return { tracks, meter };
 }

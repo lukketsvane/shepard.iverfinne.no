@@ -93,6 +93,13 @@ export function windowNorm(spread: number, ratio: LayerRatio): number {
   return norm;
 }
 
+/** Pitch phase `q` as it is heard: held at the last multiple of `pitchStep` semitones, or unchanged when the pitch glides. */
+export function steppedPitch(q: number, pitchStep: number): number {
+  if (pitchStep <= 0) return q;
+  const stepOct = pitchStep / 12;
+  return positiveMod(Math.floor(q / stepOct + 1e-9) * stepOct, 1);
+}
+
 /** Beat phase of layer 0 after `dt` seconds at a constant slope. */
 function phiAfter(state: StairState, dt: number, tempoSlope: number, params: StairParams): number {
   const rate = focusHz(params) * Math.pow(params.ratio, state.u);
@@ -232,8 +239,6 @@ export function scheduleSegment(
           if (gain < MIN_EVENT_GAIN) continue;
 
           const q = positiveMod(state.q + (pitchSlope / 60) * tau, 1);
-          const stepped = params.pitchStep > 0;
-          const stepOct = params.pitchStep / 12;
           events.push({
             time: state.time + tau,
             trackId: track.id,
@@ -247,8 +252,8 @@ export function scheduleSegment(
             gain,
             durSec: note.dur / beatHz,
             midi: note.midi,
-            pitchOct: stepped ? positiveMod(Math.floor(q / stepOct + 1e-9) * stepOct, 1) : q,
-            pitchGlide: stepped ? 0 : pitchSlope / 60,
+            pitchOct: steppedPitch(q, params.pitchStep),
+            pitchGlide: params.pitchStep > 0 ? 0 : pitchSlope / 60,
           });
         }
       }
@@ -257,6 +262,16 @@ export function scheduleSegment(
 
   events.sort((p, r) => p.time - r.time);
   return events;
+}
+
+/** Longest cycle that is rendered or written out; a gentler slope would make a file of minutes. */
+const LONGEST_LOOP_SECONDS = 180;
+
+/** Throws, saying what to do, when one cycle of `seconds` is too long to render or write out. */
+export function checkLoopLength(seconds: number): void {
+  if (seconds > LONGEST_LOOP_SECONDS) {
+    throw new Error(`One cycle would be ${Math.round(seconds)} s long. Use a steeper tempo slope.`);
+  }
 }
 
 /**

@@ -1,10 +1,12 @@
 import { parseMidi } from './midi/smf';
 import { tracksFromMidi } from './midi/clips';
 import { loopMidi } from './midi/loop';
+import { annotateTrack } from './staircase/meter';
 import { encodeWav } from './sound/wav';
 import { IStaircaseEngine, Preset, StairParams, isDrumRole } from './staircase/types';
 
-function download(bytes: Uint8Array, filename: string, mime: string): void {
+/** Save bytes as a file through a temporary link. */
+export function downloadBytes(bytes: Uint8Array, filename: string, mime: string): void {
   const url = URL.createObjectURL(new Blob([bytes.slice()], { type: mime }));
   const link = document.createElement('a');
   link.href = url;
@@ -16,14 +18,14 @@ function download(bytes: Uint8Array, filename: string, mime: string): void {
 /** Render one seamless cycle and save it. Throws with a readable message when there is no cycle to render. */
 export async function exportLoopWav(engine: IStaircaseEngine, name: string): Promise<void> {
   const loop = await engine.renderLoop();
-  download(encodeWav(loop.channels, loop.sampleRate), `${name}-loop-${Math.round(loop.seconds)}s.wav`, 'audio/wav');
+  downloadBytes(encodeWav(loop.channels, loop.sampleRate), `${name}-loop-${Math.round(loop.seconds)}s.wav`, 'audio/wav');
 }
 
-/** Save one seamless cycle as MIDI. Returns false when the tempo is steady, so nothing cycles. */
+/** Save one seamless cycle as MIDI. Returns false when the tempo is steady, so nothing cycles; throws when the cycle is too long. */
 export function exportLoopMidi(preset: Preset, params: StairParams): boolean {
   const bytes = loopMidi(preset, params);
   if (!bytes) return false;
-  download(bytes, `${preset.id}-loop.mid`, 'audio/midi');
+  downloadBytes(bytes, `${preset.id}-loop.mid`, 'audio/midi');
   return true;
 }
 
@@ -46,15 +48,17 @@ export async function importFile(
   if (/\.midi?$/i.test(file.name)) {
     const midi = parseMidi(new Uint8Array(data));
     if (!midi) return { kind: 'error', message: 'That MIDI file could not be read.' };
-    const imported = tracksFromMidi(midi, preset.meter);
+    const { tracks: imported, meter } = tracksFromMidi(midi);
     const hasDrums = imported.some((track) => isDrumRole(track.role));
-    const kept = preset.tracks.filter((track) => isDrumRole(track.role) && !hasDrums);
+    const kept = preset.tracks.filter((track) => isDrumRole(track.role) && !hasDrums).map((track) => annotateTrack(track, meter));
     return {
       kind: 'midi',
       preset: {
         ...preset,
         id: `${preset.id}-imported`,
         name: file.name.replace(/\.midi?$/i, ''),
+        meter,
+        trimDb: 0,
         tracks: [...kept, ...imported],
         params: {
           ...params,
