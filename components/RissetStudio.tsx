@@ -723,14 +723,6 @@ export default function RissetStudio() {
         </button>
 
         <a
-          href="/fingertip.html"
-          onClick={(e) => e.stopPropagation()}
-          aria-label="Open Fingertip sound laboratory"
-          className={cornerControlClass}
-        >
-          FINGERTIP
-        </a>
-        <a
           href="https://iverfinne.no"
           target="_blank"
           rel="noopener noreferrer"
