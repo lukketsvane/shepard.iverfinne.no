@@ -95,6 +95,13 @@ export default function RissetLandscapeEditor({
           {isPlaying ? <Square size={18} fill="currentColor" strokeWidth={1} /> : <Play size={20} fill="currentColor" strokeWidth={1} />}
         </button>
         <button className={iconButton} onClick={onCyclePreset} aria-label="Next preset"><SkipForward size={18} /></button>
+        <a
+          href="/fingertip.html"
+          aria-label="Open Fingertip sound laboratory"
+          className="flex h-10 items-center px-2 text-[11px] font-semibold tracking-[0.08em] text-white/80 active:text-white"
+        >
+          FINGERTIP
+        </a>
         <div className="flex-1" />
         <button className={iconButton} onClick={onOpenFile} aria-label="Load audio or MIDI"><Upload size={19} /></button>
         <button className={iconButton} onClick={onExportMidi} aria-label="Download MIDI"><Download size={19} /></button>
