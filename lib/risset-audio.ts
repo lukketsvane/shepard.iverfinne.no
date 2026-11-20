@@ -97,7 +97,15 @@ export class RissetAudioEngine {
       const masterGain = ctx.createGain();
       masterGain.gain.value = this.params.masterVolume;
 
-      compressor.connect(masterGain);
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -12;
+      limiter.knee.value = 0;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.001;
+      limiter.release.value = 0.12;
+
+      compressor.connect(limiter);
+      limiter.connect(masterGain);
       masterGain.connect(ctx.destination);
 
       this.ctx = ctx;
